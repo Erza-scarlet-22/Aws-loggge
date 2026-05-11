@@ -1,11 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Log Aggregator ? ECS Fargate + ALB + CodeBuild + Bedrock + EFS
-  + Raw/Processed S3 Buckets + Lambda Processor + Scheduler
-  + Dummy App (SSL demo) + ServiceNow + Action Lambdas (SSL/Password/DB/Compute)
-  UPGRADED: All original resources preserved. New additions:
-  DummyApp ECS service, 5 action Lambdas, ServiceNow secret,
-  SSL cert secret, updated CodeBuild buildspec, new IAM roles.
+  Log Aggregator - Toil Management - Clean deployment template.
+  ECS Fargate (4 services) + ALB + CodeBuild CI/CD + Bedrock Agent
+  + Lambda (log processor + 5 action groups) + ServiceNow + EFS
+  + S3 (raw + processed) + Log retention (configurable, default 90 days)
 
 # ==============================================================================
 # METADATA
@@ -39,7 +37,6 @@ Metadata:
 # ==============================================================================
 Parameters:
 
-  # ?? Original parameters (unchanged) ????????????????????????????????????????
   EnvironmentName:
     Type: String
     Default: prod
@@ -124,7 +121,6 @@ Parameters:
     Default: 14
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
 
-  # ?? NEW parameters ??????????????????????????????????????????????????????????
   DummyAppDesiredCount:
     Type: Number
     Default: 1
@@ -178,6 +174,7 @@ Resources:
   EcrAppRepo:
     Type: AWS::ECR::Repository
     Properties:
+      EmptyOnDelete: true
       RepositoryName: !Sub "log-aggregator-app-${EnvironmentName}"
       ImageScanningConfiguration: { ScanOnPush: true }
       LifecyclePolicy:
@@ -189,6 +186,7 @@ Resources:
   EcrDashboardRepo:
     Type: AWS::ECR::Repository
     Properties:
+      EmptyOnDelete: true
       RepositoryName: !Sub "log-aggregator-dashboard-${EnvironmentName}"
       ImageScanningConfiguration: { ScanOnPush: true }
       LifecyclePolicy:
@@ -200,6 +198,7 @@ Resources:
   EcrChatbotRepo:
     Type: AWS::ECR::Repository
     Properties:
+      EmptyOnDelete: true
       RepositoryName: !Sub "log-aggregator-chatbot-${EnvironmentName}"
       ImageScanningConfiguration: { ScanOnPush: true }
       LifecyclePolicy:
@@ -212,6 +211,7 @@ Resources:
   EcrDummyAppRepo:
     Type: AWS::ECR::Repository
     Properties:
+      EmptyOnDelete: true
       RepositoryName: !Sub "log-aggregator-${DummyAppServiceName}-${EnvironmentName}"
       ImageScanningConfiguration: { ScanOnPush: true }
       LifecyclePolicy:
@@ -304,7 +304,6 @@ Resources:
           "BEDROCK_AGENT_ALIAS_ID": "${BedrockAgentAliasId}"
         }
 
-  # NEW ? ServiceNow credentials
   # After stack deploys, update this secret with real values:
   #   aws secretsmanager put-secret-value \
   #     --secret-id servicenow/credential \
@@ -321,7 +320,6 @@ Resources:
           "password":     "REPLACE_WITH_REAL_PASSWORD"
         }
 
-  # NEW ? SSL cert ARN storage (SSL Lambda writes here after remediation)
   SSLCertSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
@@ -396,8 +394,7 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-        # NEW ? port 443 for HTTPS (used when real SSL cert is attached)
-        - IpProtocol: tcp
+              - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
@@ -475,7 +472,6 @@ Resources:
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
 
-  # NEW ? Dummy app target group (port 5001)
   DummyAppTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -492,6 +488,9 @@ Resources:
 
   AlbListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - AppLoadBalancer
+      - AppTargetGroup
     Properties:
       LoadBalancerArn: !Ref AppLoadBalancer
       Port: 80
@@ -502,6 +501,9 @@ Resources:
 
   ListenerRuleDashboard:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn:
+      - AlbListener
+      - DashboardTargetGroup
     Properties:
       ListenerArn: !Ref AlbListener
       Priority: 10
@@ -514,6 +516,9 @@ Resources:
 
   ListenerRuleChatbot:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn:
+      - AlbListener
+      - ChatbotTargetGroup
     Properties:
       ListenerArn: !Ref AlbListener
       Priority: 20
@@ -524,32 +529,37 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref ChatbotTargetGroup
 
-  # NEW ? Dummy app listener rules
   ListenerRuleDummyAppRoot:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn:
+      - AlbListener
+      - DummyAppTargetGroup
     Properties:
       ListenerArn: !Ref AlbListener
       Priority: 30
       Conditions:
         - Field: path-pattern
-          Values: ["/dummy", "/dummy/*"]
+          Values: ["/dummy", "/dummy/*", "/dummy-app", "/dummy-app/*"]
       Actions:
         - Type: forward
           TargetGroupArn: !Ref DummyAppTargetGroup
 
   ListenerRuleDummyAppApi:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn:
+      - AlbListener
+      - DummyAppTargetGroup
     Properties:
       ListenerArn: !Ref AlbListener
       Priority: 31
       Conditions:
         - Field: path-pattern
-          Values: ["/api/dummy", "/api/dummy/*"]
+          Values: ["/api/dummy", "/api/dummy/*", "/api/dummy-app", "/api/dummy-app/*",
+                   "/api/snow", "/api/snow/*", "/api/fix-error", "/api/dashboard-data"]
       Actions:
         - Type: forward
           TargetGroupArn: !Ref DummyAppTargetGroup
 
-  # NEW ? HTTPS listener (only created when AcmCertificateArn is provided)
   AlbListenerHttps:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Condition: HasAcmCertificate
@@ -564,7 +574,6 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref AppTargetGroup
 
-  # NEW ? Route 53 alias record (only created when DomainName is provided)
   Route53AliasRecord:
     Type: AWS::Route53::RecordSet
     Condition: HasDomainName
@@ -779,8 +788,7 @@ Resources:
                   - lambda:GetFunctionConfiguration
                   - lambda:WaitForFunctionUpdated
                 Resource: !GetAtt LogProcessorLambda.Arn
-              # NEW ? action Lambdas
-              # Note: using !Sub ARNs to avoid circular dependency with Lambda resources
+                          # Note: using !Sub ARNs to avoid circular dependency with Lambda resources
               - Effect: Allow
                 Action:
                   - lambda:UpdateFunctionCode
@@ -874,7 +882,6 @@ Resources:
                 # Note: using !Sub ARN to avoid circular dependency with SchedulerLambda
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-scheduler-${EnvironmentName}"
 
-  # NEW ? Role for all 5 action Lambdas
   ActionLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -941,7 +948,6 @@ Resources:
                 Action: lambda:InvokeFunction
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-servicenow-${EnvironmentName}"
 
-  # NEW ? Dummy app task role (writes to S3, reads SSL cert secret)
   DummyAppTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1156,9 +1162,7 @@ Resources:
             - { Name: PROCESSED_LOG_PREFIX, Value: !Ref ProcessedLogPrefix }
             - { Name: LOG_RETENTION_DAYS,   Value: !Sub "${LogRetentionDays}" }
             - { Name: AWS_SECRETS_NAME,    Value: !Sub "log-aggregator/bedrock-${EnvironmentName}" }
-            # NEW ? ServiceNow secret name for /api/snow-ticket polling route
-            - { Name: SERVICENOW_SECRET_NAME, Value: !Ref ServiceNowSecretName }
-            - { Name: AWS_DEFAULT_REGION,     Value: !Ref AWS::Region }
+                      - { Name: SERVICENOW_SECRET_NAME, Value: !Ref ServiceNowSecretName }
           Secrets:
             - Name: BEDROCK_AGENT_ID
               ValueFrom: !Sub "${BedrockSecret}:BEDROCK_AGENT_ID::"
@@ -1211,7 +1215,6 @@ Resources:
             - { Name: APP_HOST,            Value: "0.0.0.0" }
             - { Name: SERVICE_TYPE,        Value: chatbot }
             - { Name: LOG_LEVEL,           Value: INFO }
-            - { Name: AWS_DEFAULT_REGION,  Value: !Ref AWS::Region }
             - { Name: PYTHONUNBUFFERED,    Value: "1" }
             - { Name: PROCESSED_BUCKET,    Value: !Ref ProcessedLogsBucket }
             - { Name: AWS_SECRETS_NAME,    Value: !Sub "log-aggregator/bedrock-${EnvironmentName}" }
@@ -1234,7 +1237,6 @@ Resources:
             Retries: 3
             StartPeriod: 60
 
-  # NEW ? Dummy app task definition
   DummyAppTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -1249,15 +1251,26 @@ Resources:
         - Name: dummy-app
           Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-${DummyAppServiceName}-${EnvironmentName}:latest"
           PortMappings:
-            - ContainerPort: 5001
+            - ContainerPort: !Ref ContainerPort
               Protocol: tcp
           Environment:
-            - { Name: APP_PORT,           Value: !Sub "${ContainerPort}" }
-            - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
-            - { Name: RAW_LOGS_BUCKET,    Value: !Ref RawLogsBucket }
-            - { Name: RAW_LOGS_PREFIX,    Value: "raw-logs/" }
-            - { Name: PYTHONUNBUFFERED,   Value: "1" }
-            - { Name: DEMO_MODE,          Value: "true" }
+            - { Name: APP_PORT,            Value: !Sub "${ContainerPort}" }
+            - { Name: APP_HOST,            Value: "0.0.0.0" }
+            - { Name: SERVICE_TYPE,        Value: dummy-app }
+            - { Name: RAW_LOGS_BUCKET,     Value: !Ref RawLogsBucket }
+            - { Name: RAW_LOGS_PREFIX,     Value: "raw-logs/" }
+            - { Name: PROCESSED_BUCKET,    Value: !Ref ProcessedLogsBucket }
+            - { Name: LOG_RETENTION_DAYS,  Value: !Sub "${LogRetentionDays}" }
+            - { Name: SERVICENOW_SECRET_NAME, Value: !Ref ServiceNowSecretName }
+            - { Name: PYTHONUNBUFFERED,    Value: "1" }
+            - { Name: DEMO_MODE,           Value: "true" }
+          Secrets:
+            - Name: SERVICENOW_INSTANCE
+              ValueFrom: !Sub "${ServiceNowSecret}:instance_url::"
+            - Name: SERVICENOW_USERNAME
+              ValueFrom: !Sub "${ServiceNowSecret}:username::"
+            - Name: SERVICENOW_PASSWORD
+              ValueFrom: !Sub "${ServiceNowSecret}:password::"
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -1266,7 +1279,7 @@ Resources:
               awslogs-stream-prefix: dummy-app
           Essential: true
           HealthCheck:
-            Command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
+            Command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:' + str(os.environ.get('APP_PORT','5000')) + '/health')\" || exit 1"]
             Interval: 30
             Timeout: 5
             Retries: 3
@@ -1341,7 +1354,6 @@ Resources:
         MinimumHealthyPercent: 50
         MaximumPercent: 200
 
-  # NEW ? Dummy app ECS service
   DummyAppService:
     Type: AWS::ECS::Service
     DependsOn: [AlbListener, ListenerRuleDummyAppRoot, ListenerRuleDummyAppApi]
@@ -1445,7 +1457,6 @@ Resources:
                   cfn_respond(event, context, "FAILED", str(e))
 
   # ============================================================
-  # NEW ? Action Lambdas (5)  All start as stubs. CodeBuild deploys real code.
   # ============================================================
   ServiceNowLambda:
     Type: AWS::Lambda::Function
@@ -1574,7 +1585,6 @@ Resources:
               return {"actionGroup": event.get("actionGroup",""), "function": event.get("function",""),
                       "functionResponse": {"responseBody": {"TEXT": {"body": '{"status":"stub","note":"run CodeBuild"}'}}}}
 
-  # NEW ? Bedrock resource-based permissions on action Lambdas
   ServiceNowLambdaBedrockPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -1653,8 +1663,7 @@ Resources:
           - { Name: PROCESSED_BUCKET,      Value: !Ref ProcessedLogsBucket }
           - { Name: LOG_RETENTION_DAYS,    Value: !Sub "${LogRetentionDays}" }
           - { Name: LAMBDA_FUNCTION_NAME,  Value: !Ref LogProcessorLambda }
-          # NEW ? action Lambda function names
-          - { Name: LAMBDA_SERVICENOW,     Value: !Ref ServiceNowLambda }
+                  - { Name: LAMBDA_SERVICENOW,     Value: !Ref ServiceNowLambda }
           - { Name: LAMBDA_SSL,            Value: !Ref SSLRemediationLambda }
           - { Name: LAMBDA_PASSWORD,       Value: !Ref PasswordResetLambda }
           - { Name: LAMBDA_DB,             Value: !Ref DBRemediationLambda }
@@ -1901,7 +1910,6 @@ Resources:
 # ==============================================================================
 Outputs:
 
-  # ?? Original outputs (unchanged) ??????????????????????????????????????????
   AlbUrl:
     Description: "ALB DNS ? open in browser"
     Value: !Sub "http://${AppLoadBalancer.DNSName}"
@@ -1955,7 +1963,6 @@ Outputs:
   SchedulerNotificationTopicArn:
     Value: !Ref SchedulerNotificationTopic
 
-  # ?? New outputs ????????????????????????????????????????????????????????????
   DummyAppEndpoint:
     Description: "SSL Demo dashboard ? open this to run the demo"
     Value: !Sub "http://${AppLoadBalancer.DNSName}/dummy"
