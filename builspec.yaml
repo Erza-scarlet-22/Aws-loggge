@@ -7,67 +7,124 @@ env:
 phases:
   install:
     runtime-versions:
-      python: "3.12"
+      python: "3.11"
     commands:
       - pip install --upgrade pip awscli --quiet
 
   pre_build:
     commands:
       - echo "=== ECR Login ==="
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - |
+          aws ecr get-login-password --region $AWS_DEFAULT_REGION | \
+          docker login --username AWS --password-stdin \
+          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+
       - export IMAGE_TAG=$(date +%Y%m%d%H%M%S)
       - echo "Image tag -> $IMAGE_TAG"
       - ls -la
+
       - |
-        if [ ! -f "dockerfiles/Dockerfile.app" ]; then
-          FOUND=$(find . -name "Dockerfile.app" | head -1)
-          if [ -n "$FOUND" ]; then
-            NESTED=$(dirname $(dirname $FOUND))
-            echo "Flattening from $NESTED..."
-            cp -r $NESTED/. .
+          if [ ! -f "Dockerfiles/Dockerfile.app" ]; then
+            FOUND=$(find . -name "Dockerfile.app" | head -1)
+            if [ -n "$FOUND" ]; then
+              NESTED=$(dirname "$(dirname "$FOUND")")
+              echo "Flattening from $NESTED..."
+              [ "$NESTED" != "." ] && cp -r "$NESTED/." . || true
+            fi
           fi
-        fi
+
       - echo "=== Checking required folders ==="
-      - ls Application/ Conversion/ Dashboard/ DummyApp/ 2>&1 || echo "WARNING: folders missing"
-      - ls servicenow_client.py 2>&1 || echo "WARNING: servicenow_client.py missing"
-      - ls dockerfiles/ 2>&1 || echo "WARNING: dockerfiles/ missing"
 
   build:
     commands:
       - echo "=== Building App image ==="
-      - docker build --cache-from $ECR_APP_URI:latest -f dockerfiles/Dockerfile.app -t $ECR_APP_URI:$IMAGE_TAG -t $ECR_APP_URI:latest .
+      - |
+          docker build --cache-from $ECR_APP_URI:latest \
+            -f Dockerfiles/Dockerfile.app \
+            -t $ECR_APP_URI:$IMAGE_TAG -t $ECR_APP_URI:latest .
+
       - echo "=== Building Dashboard image ==="
-      - docker build --cache-from $ECR_DASHBOARD_URI:latest -f dockerfiles/Dockerfile.dashboard -t $ECR_DASHBOARD_URI:$IMAGE_TAG -t $ECR_DASHBOARD_URI:latest .
+      - |
+          docker build --cache-from $ECR_DASHBOARD_URI:latest \
+            -f Dockerfiles/Dockerfile.dashboard \
+            -t $ECR_DASHBOARD_URI:$IMAGE_TAG -t $ECR_DASHBOARD_URI:latest .
+
       - echo "=== Building Chatbot image ==="
-      - docker build --cache-from $ECR_CHATBOT_URI:latest -f dockerfiles/Dockerfile.chatbot -t $ECR_CHATBOT_URI:$IMAGE_TAG -t $ECR_CHATBOT_URI:latest .
+      - |
+          docker build --cache-from $ECR_CHATBOT_URI:latest \
+            -f Dockerfiles/Dockerfile.chatbot \
+            -t $ECR_CHATBOT_URI:$IMAGE_TAG -t $ECR_CHATBOT_URI:latest .
+
       - echo "=== Building Dummy App image ==="
-      - docker build --cache-from $ECR_DUMMY_APP_URI:latest -f dockerfiles/Dockerfile.dummy-app -t $ECR_DUMMY_APP_URI:$IMAGE_TAG -t $ECR_DUMMY_APP_URI:latest .
-      - echo "=== Packaging Lambda Processor ==="
-      - rm -rf /tmp/lambda-pkg && mkdir -p /tmp/lambda-pkg
-      - cp lambda/lambda_handler.py /tmp/lambda-pkg/
-      - cd /tmp/lambda-pkg && zip -r9q /tmp/log-processor-$IMAGE_TAG.zip . -x "*.pyc" -x "__pycache__/*" && cd $CODEBUILD_SRC_DIR
-      - aws s3 cp /tmp/log-processor-$IMAGE_TAG.zip s3://$RAW_LOGS_BUCKET/lambda/log-processor-$IMAGE_TAG.zip
-      - aws s3 cp /tmp/log-processor-$IMAGE_TAG.zip s3://$RAW_LOGS_BUCKET/lambda/log-processor-latest.zip
+      - |
+          docker build --cache-from $ECR_DUMMY_APP_URI:latest \
+            -f Dockerfiles/Dockerfile.dummy-app \
+            -t $ECR_DUMMY_APP_URI:$IMAGE_TAG -t $ECR_DUMMY_APP_URI:latest .
+
+      - echo "=== Packaging Lambda Processor (real handler) ==="
+      - |
+          rm -rf /tmp/lambda-pkg && mkdir -p /tmp/lambda-pkg
+          cp lambda/lambda_handler.py /tmp/lambda-pkg/
+          cd /tmp/lambda-pkg
+          zip -r9q /tmp/log-processor-$IMAGE_TAG.zip . -x "*.pyc" -x "__pycache__/*"
+          cd $CODEBUILD_SRC_DIR
+
+      - |
+          aws s3 cp /tmp/log-processor-$IMAGE_TAG.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/log-processor-$IMAGE_TAG.zip
+      - |
+          aws s3 cp /tmp/log-processor-$IMAGE_TAG.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/log-processor-latest.zip
+
       - echo "=== Packaging ServiceNow Lambda ==="
-      - rm -rf /tmp/lam-snow && mkdir -p /tmp/lam-snow && cp lambda/servicenow_lambda_handler.py /tmp/lam-snow/
-      - cd /tmp/lam-snow && zip -r9q /tmp/lam-servicenow.zip . -x "*.pyc" && cd $CODEBUILD_SRC_DIR
-      - aws s3 cp /tmp/lam-servicenow.zip s3://$RAW_LOGS_BUCKET/lambda/lam-servicenow-$IMAGE_TAG.zip
+      - |
+          rm -rf /tmp/lam-snow && mkdir -p /tmp/lam-snow
+          cp lambda/servicenow_lambda_handler.py /tmp/lam-snow/
+          cd /tmp/lam-snow
+          zip -r9q /tmp/lam-servicenow.zip . -x "*.pyc"
+          cd $CODEBUILD_SRC_DIR
+          aws s3 cp /tmp/lam-servicenow.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/lam-servicenow-$IMAGE_TAG.zip
+
       - echo "=== Packaging SSL Lambda ==="
-      - rm -rf /tmp/lam-ssl && mkdir -p /tmp/lam-ssl && cp lambda/ssl_lambda_handler.py /tmp/lam-ssl/
-      - cd /tmp/lam-ssl && zip -r9q /tmp/lam-ssl.zip . -x "*.pyc" && cd $CODEBUILD_SRC_DIR
-      - aws s3 cp /tmp/lam-ssl.zip s3://$RAW_LOGS_BUCKET/lambda/lam-ssl-$IMAGE_TAG.zip
+      - |
+          rm -rf /tmp/lam-ssl && mkdir -p /tmp/lam-ssl
+          cp lambda/ssl_lambda_handler.py /tmp/lam-ssl/
+          cd /tmp/lam-ssl
+          zip -r9q /tmp/lam-ssl.zip . -x "*.pyc"
+          cd $CODEBUILD_SRC_DIR
+          aws s3 cp /tmp/lam-ssl.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/lam-ssl-$IMAGE_TAG.zip
+
       - echo "=== Packaging Password Reset Lambda ==="
-      - rm -rf /tmp/lam-pw && mkdir -p /tmp/lam-pw && cp lambda/password_reset_lambda_handler.py /tmp/lam-pw/
-      - cd /tmp/lam-pw && zip -r9q /tmp/lam-password.zip . -x "*.pyc" && cd $CODEBUILD_SRC_DIR
-      - aws s3 cp /tmp/lam-password.zip s3://$RAW_LOGS_BUCKET/lambda/lam-password-$IMAGE_TAG.zip
+      - |
+          rm -rf /tmp/lam-pw && mkdir -p /tmp/lam-pw
+          cp lambda/password_reset_lambda_handler.py /tmp/lam-pw/
+          cd /tmp/lam-pw
+          zip -r9q /tmp/lam-password.zip . -x "*.pyc"
+          cd $CODEBUILD_SRC_DIR
+          aws s3 cp /tmp/lam-password.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/lam-password-$IMAGE_TAG.zip
+
       - echo "=== Packaging DB Lambda ==="
-      - rm -rf /tmp/lam-db && mkdir -p /tmp/lam-db && cp lambda/db_lambda_handler.py /tmp/lam-db/
-      - cd /tmp/lam-db && zip -r9q /tmp/lam-db.zip . -x "*.pyc" && cd $CODEBUILD_SRC_DIR
-      - aws s3 cp /tmp/lam-db.zip s3://$RAW_LOGS_BUCKET/lambda/lam-db-$IMAGE_TAG.zip
+      - |
+          rm -rf /tmp/lam-db && mkdir -p /tmp/lam-db
+          cp lambda/db_lambda_handler.py /tmp/lam-db/
+          cd /tmp/lam-db
+          zip -r9q /tmp/lam-db.zip . -x "*.pyc"
+          cd $CODEBUILD_SRC_DIR
+          aws s3 cp /tmp/lam-db.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/lam-db-$IMAGE_TAG.zip
+
       - echo "=== Packaging Compute Lambda ==="
-      - rm -rf /tmp/lam-compute && mkdir -p /tmp/lam-compute && cp lambda/compute_lambda_handler.py /tmp/lam-compute/
-      - cd /tmp/lam-compute && zip -r9q /tmp/lam-compute.zip . -x "*.pyc" && cd $CODEBUILD_SRC_DIR
-      - aws s3 cp /tmp/lam-compute.zip s3://$RAW_LOGS_BUCKET/lambda/lam-compute-$IMAGE_TAG.zip
+      - |
+          rm -rf /tmp/lam-compute && mkdir -p /tmp/lam-compute
+          cp lambda/compute_lambda_handler.py /tmp/lam-compute/
+          cd /tmp/lam-compute
+          zip -r9q /tmp/lam-compute.zip . -x "*.pyc"
+          cd $CODEBUILD_SRC_DIR
+          aws s3 cp /tmp/lam-compute.zip \
+            s3://$RAW_LOGS_BUCKET/lambda/lam-compute-$IMAGE_TAG.zip
 
   post_build:
     commands:
@@ -76,26 +133,49 @@ phases:
       - docker push $ECR_DASHBOARD_URI:$IMAGE_TAG && docker push $ECR_DASHBOARD_URI:latest
       - docker push $ECR_CHATBOT_URI:$IMAGE_TAG && docker push $ECR_CHATBOT_URI:latest
       - docker push $ECR_DUMMY_APP_URI:$IMAGE_TAG && docker push $ECR_DUMMY_APP_URI:latest
+
       - echo "=== Deploying Lambda Processor ==="
-      - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/log-processor-latest.zip
-      - aws lambda wait function-updated --function-name $LAMBDA_FUNCTION_NAME
-      - aws lambda publish-version --function-name $LAMBDA_FUNCTION_NAME
+      - |
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --s3-bucket $RAW_LOGS_BUCKET \
+            --s3-key lambda/log-processor-latest.zip
+          aws lambda wait function-updated --function-name $LAMBDA_FUNCTION_NAME
+          aws lambda publish-version --function-name $LAMBDA_FUNCTION_NAME
+
       - echo "=== Deploying Action Lambdas ==="
-      - aws lambda update-function-code --function-name $LAMBDA_SERVICENOW --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-servicenow-$IMAGE_TAG.zip
-      - aws lambda wait function-updated --function-name $LAMBDA_SERVICENOW
-      - aws lambda update-function-code --function-name $LAMBDA_SSL --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-ssl-$IMAGE_TAG.zip
-      - aws lambda wait function-updated --function-name $LAMBDA_SSL
-      - aws lambda update-function-code --function-name $LAMBDA_PASSWORD --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-password-$IMAGE_TAG.zip
-      - aws lambda wait function-updated --function-name $LAMBDA_PASSWORD
-      - aws lambda update-function-code --function-name $LAMBDA_DB --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-db-$IMAGE_TAG.zip
-      - aws lambda wait function-updated --function-name $LAMBDA_DB
-      - aws lambda update-function-code --function-name $LAMBDA_COMPUTE --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-compute-$IMAGE_TAG.zip
-      - aws lambda wait function-updated --function-name $LAMBDA_COMPUTE
+      - |
+          aws lambda update-function-code --function-name $LAMBDA_SERVICENOW \
+            --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-servicenow-$IMAGE_TAG.zip
+          aws lambda wait function-updated --function-name $LAMBDA_SERVICENOW
+
+          aws lambda update-function-code --function-name $LAMBDA_SSL \
+            --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-ssl-$IMAGE_TAG.zip
+          aws lambda wait function-updated --function-name $LAMBDA_SSL
+
+          aws lambda update-function-code --function-name $LAMBDA_PASSWORD \
+            --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-password-$IMAGE_TAG.zip
+          aws lambda wait function-updated --function-name $LAMBDA_PASSWORD
+
+          aws lambda update-function-code --function-name $LAMBDA_DB \
+            --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-db-$IMAGE_TAG.zip
+          aws lambda wait function-updated --function-name $LAMBDA_DB
+
+          aws lambda update-function-code --function-name $LAMBDA_COMPUTE \
+            --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-compute-$IMAGE_TAG.zip
+          aws lambda wait function-updated --function-name $LAMBDA_COMPUTE
+
       - echo "=== Redeploying ECS Services ==="
-      - aws ecs update-service --cluster $ECS_CLUSTER_NAME --service $APP_SERVICE_NAME --force-new-deployment
-      - aws ecs update-service --cluster $ECS_CLUSTER_NAME --service $DASHBOARD_SERVICE_NAME --force-new-deployment
-      - aws ecs update-service --cluster $ECS_CLUSTER_NAME --service $CHATBOT_SERVICE_NAME --force-new-deployment
-      - aws ecs update-service --cluster $ECS_CLUSTER_NAME --service $DUMMY_APP_SERVICE_NAME --force-new-deployment
+      - |
+          aws ecs update-service --cluster $ECS_CLUSTER_NAME \
+            --service $APP_SERVICE_NAME --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER_NAME \
+            --service $DASHBOARD_SERVICE_NAME --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER_NAME \
+            --service $CHATBOT_SERVICE_NAME --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER_NAME \
+            --service $DUMMY_APP_SERVICE_NAME --force-new-deployment
+
       - echo "=== Build complete. Tag -> $IMAGE_TAG ==="
 
 cache:
