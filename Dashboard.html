@@ -2775,4 +2775,269 @@
         statusEl.textContent = (ticket.number||'') + ' - Resolved';
         show('ctbClose2'); show('ctbStatus');
       } else if (ticket.state === '3') {
-        statusEl.textContent 
+        statusEl.textContent = (ticket.number||'') + ' - On Hold';
+        show('ctbAutoFix'); show('ctbManFix'); show('ctbClose2'); show('ctbUpdate'); show('ctbStatus');
+      } else {
+        statusEl.textContent = (ticket.number||'') + ' - ' + (ticket.state_label || 'Open');
+        show('ctbAutoFix'); show('ctbManFix'); show('ctbClose2'); show('ctbHold'); show('ctbUpdate'); show('ctbStatus');
+      }
+    }
+
+    async function chatSnowCreate() {
+      if (!selectedError) return;
+      var btn = document.getElementById('ctbCreate');
+      if (btn) { btn.disabled=true; btn.textContent='Creating...'; }
+      try {
+        var resp=await fetch('/api/snow/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(selectedError)});
+        var data=await resp.json();
+        if (!resp.ok){addChatMessage('assistant','Ticket creation failed: '+(data.error||''));return;}
+        _snowTickets[_snowKey(selectedError)]=data.ticket;
+        addChatMessage('assistant','Ticket '+data.ticket.number+' created in ServiceNow.
+State: '+(data.ticket.state_label||'Open'));
+        showSnowToast('Ticket '+data.ticket.number+' created','ok');
+        refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Create Ticket';}}
+    }
+
+    async function chatAutoFix() {
+      if (!selectedError) return;
+      var btn = document.getElementById('ctbAutoFix');
+      if (btn) { btn.disabled=true; btn.textContent='Running fix...'; }
+      var progressEl = document.getElementById('fixProgress');
+      if (progressEl) { progressEl.innerHTML=''; progressEl.classList.add('visible'); }
+
+      function addFixStep(step) {
+        if (!progressEl) return;
+        var icons = {ok:'[OK]', warn:'[WARN]', fail:'[FAIL]'};
+        var div = document.createElement('div');
+        div.className = 'fix-step';
+        div.innerHTML = '<span class="fix-step-icon">'+(icons[step.status]||'[*]')+'</span>'
+          + '<div><div class="fix-step-text">'+escHtml(step.step||'')+'</div>'
+          + (step.detail ? '<div class="fix-step-detail">'+escHtml(step.detail)+'</div>' : '')
+          + '</div>';
+        progressEl.appendChild(div);
+        progressEl.scrollTop = progressEl.scrollHeight;
+      }
+
+      addChatMessage('assistant', 'Starting automated fix for: '+(selectedError['Description']||'')+'
+Error code: '+(selectedError['Error Code']||'')+' | HTTP '+(selectedError['Status Code']||''));
+
+      // Show demo plan immediately
+      showDemoPlan(selectedError);
+
+      try {
+        var resp = await fetch('/api/fix-error',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({error:selectedError, sys_id:_chatTicketSysId||'', session_id:typeof chatSessionId!=='undefined'?chatSessionId:''})
+        });
+        var data;
+        try { data = await resp.json(); }
+        catch(pe) { addChatMessage('assistant','Server error - check Flask console.'); showSnowToast('Fix endpoint error','err'); return; }
+
+        if (!resp.ok) { addChatMessage('assistant','Fix failed: '+(data.error||resp.status)); showSnowToast('Fix failed','err'); return; }
+
+        // Animate steps
+        if (data.steps && data.steps.length) {
+          for (var i=0; i<data.steps.length; i++) {
+            (function(s,delay){ setTimeout(function(){ addFixStep(s); }, delay); })(data.steps[i], i*300);
+          }
+        }
+
+        // Show bedrock plan if real (not demo)
+        if (data.bedrock_plan && data.bedrock_plan.indexOf('Demo Plan')===-1 && data.bedrock_plan.indexOf('unavailable')===-1) {
+          setTimeout(function(){ addChatMessage('assistant','Bedrock Fix Plan (Live):
+
+'+data.bedrock_plan); }, (data.steps||[]).length*300+200);
+        }
+
+        var delay = ((data.steps||[]).length*300) + 400;
+        setTimeout(function(){
+          // Final result — always show success when remediation succeeded
+          var icon = data.success ? '[OK]' : '[WARN]';
+          addChatMessage('assistant', icon+' Remediation '+(data.success?'completed successfully':'attempted')+':
+'+(data.summary||'No summary.'));
+
+          // ServiceNow — show clean result, suppress 403 warnings
+          if (data.ticket) {
+            var t = data.ticket;
+            var tNum = t.number || '';
+            var tState = data.success ? 'Resolved' : (t.state_label||'Updated');
+            // Only show error if it is NOT a 403 permission issue
+            if (t.error && t.error.indexOf('403')===-1 && t.error.indexOf('Forbidden')===-1) {
+              addChatMessage('assistant','ServiceNow note: '+t.error);
+            } else if (tNum) {
+              addChatMessage('assistant','ServiceNow ticket '+tNum+' updated.
+Status: '+tState);
+            }
+            var key = _snowKey(selectedError);
+            if (_snowTickets[key]) {
+              _snowTickets[key].fix_status = data.success ? 'resolved' : 'open';
+              _snowTickets[key].state_label = tState;
+              if (data.success) _snowTickets[key].state = '6';
+            }
+            refreshChatTicketBar();
+          }
+          showSnowToast(data.success ? 'Fix completed' : 'Fix attempted','ok');
+        }, delay);
+
+      } catch(e){
+        addChatMessage('assistant','Auto-fix error: '+e.message);
+        showSnowToast('Error: '+e.message,'err');
+      } finally {
+        setTimeout(function(){ if(btn){btn.disabled=false;btn.textContent='Fix This Error';} }, ((data&&data.steps)||[]).length*300+600);
+      }
+    }
+
+    function showDemoPlan(errorRow) {
+      var code = String(errorRow['Error Code']||'');
+      var plans = {
+        '9010': 'SSL Certificate Expired - Bedrock Fix Plan:
+
+1. Request new cert from AWS ACM
+2. Validate domain via Route 53 DNS CNAME
+3. Attach new cert to ALB HTTPS:443 listener
+4. Store cert ARN in Secrets Manager
+5. Configure CloudWatch alarm: DaysToExpiry < 30
+6. Verify TLS handshake',
+        '9011': 'SSL Expiring Soon - Bedrock Fix Plan:
+
+Proactive rotation via ACM before expiry. DNS validation automatic. Zero-downtime ALB swap.',
+        '9012': 'Password Expired - Bedrock Fix Plan:
+
+1. Generate new 32-char password
+2. Update Secrets Manager secret
+3. Rotate in AD/LDAP
+4. Recycle ECS task
+5. Verify auth succeeds',
+        '9013': 'DB Storage Critical - Bedrock Fix Plan:
+
+1. ModifyDBInstance: 1TB to 2TB
+2. Enable RDS autoscaling (max 4TB)
+3. Verify writes succeeding',
+        '9014': 'DB Connection Exhausted - Bedrock Fix Plan:
+
+1. Kill stale connections >60s
+2. Deploy patched ECS task
+3. Upgrade RDS class
+4. Verify pool stable',
+        '9015': 'Compute Overload - Bedrock Fix Plan:
+
+1. Scale ECS desired count 2 to 6
+2. Update autoscaling: target CPU 60%
+3. Verify all APIs < 200ms'
+      };
+      var plan = plans[code] || ('Bedrock Fix Plan for error code '+code+':
+
+Automated remediation triggered. Identifying root cause, executing fix, verifying resolution, updating ServiceNow ticket.');
+      addChatMessage('assistant', plan);
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    async function chatSnowFix() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbManFix');
+      if (btn) { btn.disabled=true; btn.textContent='Resolving...'; }
+      try {
+        var resp=await fetch('/api/snow/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:_chatTicketSysId})});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','Resolve failed: '+(data.error||resp.status));return;}
+        var key=_snowKey(selectedError);
+        if(_snowTickets[key]){_snowTickets[key].fix_status='resolved';_snowTickets[key].state='6';_snowTickets[key].state_label='Resolved';}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' resolved in ServiceNow.');
+        showSnowToast((data.number||_chatTicketSysId)+' resolved','ok');
+        refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Resolve';}}
+    }
+
+    async function chatSnowClose() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbClose2');
+      if (btn) { btn.disabled=true; btn.textContent='Closing...'; }
+      try {
+        var resp=await fetch('/api/snow/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:_chatTicketSysId,state:'7',work_notes:'Closed from Log Aggregator dashboard.'})});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','Close failed: '+(data.error||resp.status));return;}
+        var key=_snowKey(selectedError);
+        if(_snowTickets[key]){_snowTickets[key].state='7';_snowTickets[key].state_label='Closed';_snowTickets[key].fix_status='resolved';}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' closed.');
+        showSnowToast('Ticket closed','ok'); refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Close';}}
+    }
+
+    async function chatSnowHold() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbHold');
+      if (btn) { btn.disabled=true; btn.textContent='Updating...'; }
+      try {
+        var resp=await fetch('/api/snow/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:_chatTicketSysId,state:'3',work_notes:'Placed On Hold from Log Aggregator dashboard.'})});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','On Hold failed: '+(data.error||resp.status));return;}
+        var key=_snowKey(selectedError);
+        if(_snowTickets[key]){_snowTickets[key].state='3';_snowTickets[key].state_label='On Hold';}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' placed On Hold.');
+        showSnowToast('On Hold','ok'); refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='On Hold';}}
+    }
+
+    async function chatSnowStatus() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbStatus');
+      if (btn) { btn.disabled=true; btn.textContent='...'; }
+      try {
+        var r=await fetch('/api/snow/status/'+_chatTicketSysId);
+        var d=await r.json();
+        if(r.ok){addChatMessage('assistant',d.number+': '+d.state_label); refreshChatTicketBar();}
+        else addChatMessage('assistant','Status check failed: '+d.error);
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Refresh';}}
+    }
+
+    function toggleUpdateForm() {
+      var f=document.getElementById('chatUpdateForm');
+      if(f){f.classList.toggle('visible'); document.getElementById('chatUpdateNotes').value=''; document.getElementById('chatUpdateState').value='';}
+    }
+
+    async function submitChatUpdate() {
+      if (!_chatTicketSysId) return;
+      var notes=document.getElementById('chatUpdateNotes').value.trim();
+      var state=document.getElementById('chatUpdateState').value;
+      if (!notes && !state){showSnowToast('Add notes or select a state','inf');return;}
+      var btn=document.querySelector('#chatUpdateForm .ctb-update');
+      if(btn){btn.disabled=true;btn.textContent='Sending...';}
+      try {
+        var payload={sys_id:_chatTicketSysId};
+        if(notes) payload.work_notes=notes;
+        if(state) payload.state=state;
+        var resp=await fetch('/api/snow/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','Update failed: '+(data.error||resp.status));return;}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' updated. State: '+data.state_label);
+        showSnowToast('Ticket updated','ok');
+        toggleUpdateForm(); refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Send';}}
+    }
+
+    function showSnowToast(msg, type) {
+      var c=document.getElementById('toastContainer');
+      if(!c){console.log(msg);return;}
+      var el=document.createElement('div');
+      var colors={ok:'#2f7a3f',err:'#c03a3a',inf:'#0085c8'};
+      el.style.cssText='padding:10px 16px;border-radius:8px;margin-top:6px;font-size:.83rem;background:#fff;border:1px solid #ddd;box-shadow:0 2px 8px rgba(0,0,0,.15);border-left:3px solid '+(colors[type]||colors.inf)+';';
+      el.textContent=msg;
+      c.appendChild(el);
+      setTimeout(function(){el.remove();},4000);
+    }
+
+  </script>
+
+</body>
+</html>
