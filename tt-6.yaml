@@ -226,7 +226,7 @@ Resources:
   ArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "log-aggregator-artifacts-${AWS::AccountId}-${EnvironmentName}"
+      BucketName: !Sub "log-aggregator-artifact-${AWS::AccountId}-${EnvironmentName}"
       VersioningConfiguration: { Status: Enabled }
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -238,7 +238,7 @@ Resources:
   RawLogsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "log-aggregator-raw-logs-${AWS::AccountId}-${EnvironmentName}"
+      BucketName: !Sub "log-aggregator-raw-log-${AWS::AccountId}-${EnvironmentName}"
       VersioningConfiguration: { Status: Enabled }
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -278,7 +278,7 @@ Resources:
   ProcessedLogsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "log-aggregator-processed-${AWS::AccountId}-${EnvironmentName}"
+      BucketName: !Sub "log-aggregator-processeds-${AWS::AccountId}-${EnvironmentName}"
       VersioningConfiguration: { Status: Enabled }
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -394,7 +394,7 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-              - IpProtocol: tcp
+        - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
@@ -539,7 +539,7 @@ Resources:
       Priority: 30
       Conditions:
         - Field: path-pattern
-          Values: ["/dummy", "/dummy/*", "/dummy-app", "/dummy-app/*"]
+          Values: [ "/dummy/*", "/dummy-app/*"]
       Actions:
         - Type: forward
           TargetGroupArn: !Ref DummyAppTargetGroup
@@ -554,8 +554,22 @@ Resources:
       Priority: 31
       Conditions:
         - Field: path-pattern
-          Values: ["/api/dummy", "/api/dummy/*", "/api/dummy-app", "/api/dummy-app/*",
-                   "/api/snow", "/api/snow/*", "/api/fix-error", "/api/dashboard-data"]
+          Values: ["/api/dummy", "/api/dummy/*", "/api/dummy-app", "/api/dummy-app/*"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DummyAppTargetGroup
+
+  ListenerRuleDummyAppApi2:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DependsOn:
+      - AlbListener
+      - DummyAppTargetGroup
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 32
+      Conditions:
+        - Field: path-pattern
+          Values: ["/api/snow", "/api/snow/*", "/api/fix-error", "/api/dashboard-data"]
       Actions:
         - Type: forward
           TargetGroupArn: !Ref DummyAppTargetGroup
@@ -771,10 +785,15 @@ Resources:
                   - !GetAtt ArtifactBucket.Arn
                   - !Sub "${ArtifactBucket.Arn}/*"
               - Effect: Allow
-                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:ListBucket]
                 Resource:
                   - !GetAtt RawLogsBucket.Arn
                   - !Sub "${RawLogsBucket.Arn}/*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:ListBucket]
+                Resource:
+                  - !Sub  "arn:aws:s3:::log-aggregator-source-zip-723651357729"
+                  - !Sub "arn:aws:s3:::log-aggregator-source-zip-723651357729/*"
               # Original ? log processor Lambda
               - Effect: Allow
                 Action:
@@ -1162,7 +1181,7 @@ Resources:
             - { Name: PROCESSED_LOG_PREFIX, Value: !Ref ProcessedLogPrefix }
             - { Name: LOG_RETENTION_DAYS,   Value: !Sub "${LogRetentionDays}" }
             - { Name: AWS_SECRETS_NAME,    Value: !Sub "log-aggregator/bedrock-${EnvironmentName}" }
-                      - { Name: SERVICENOW_SECRET_NAME, Value: !Ref ServiceNowSecretName }
+            - { Name: SERVICENOW_SECRET_NAME, Value: !Ref ServiceNowSecretName }
           Secrets:
             - Name: BEDROCK_AGENT_ID
               ValueFrom: !Sub "${BedrockSecret}:BEDROCK_AGENT_ID::"
@@ -1356,7 +1375,7 @@ Resources:
 
   DummyAppService:
     Type: AWS::ECS::Service
-    DependsOn: [AlbListener, ListenerRuleDummyAppRoot, ListenerRuleDummyAppApi]
+    DependsOn: [AlbListener, ListenerRuleDummyAppRoot, ListenerRuleDummyAppApi, ListenerRuleDummyAppApi2]
     Properties:
       ServiceName: !Sub "${DummyAppServiceName}-svc-${EnvironmentName}"
       Cluster: !Ref EcsCluster
@@ -1663,7 +1682,7 @@ Resources:
           - { Name: PROCESSED_BUCKET,      Value: !Ref ProcessedLogsBucket }
           - { Name: LOG_RETENTION_DAYS,    Value: !Sub "${LogRetentionDays}" }
           - { Name: LAMBDA_FUNCTION_NAME,  Value: !Ref LogProcessorLambda }
-                  - { Name: LAMBDA_SERVICENOW,     Value: !Ref ServiceNowLambda }
+          - { Name: LAMBDA_SERVICENOW,     Value: !Ref ServiceNowLambda }
           - { Name: LAMBDA_SSL,            Value: !Ref SSLRemediationLambda }
           - { Name: LAMBDA_PASSWORD,       Value: !Ref PasswordResetLambda }
           - { Name: LAMBDA_DB,             Value: !Ref DBRemediationLambda }
