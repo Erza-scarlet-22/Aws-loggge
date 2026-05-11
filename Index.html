@@ -503,79 +503,558 @@
 
     /* ── Date filter strip ── */
     .filter-strip {
-      margin-top: 16px;
       display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
       flex-wrap: wrap;
+    }
+    .filter-strip label {
+      font-size: .78rem;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .date-range-select {
+      appearance: none;
+      -webkit-appearance: none;
+      border: 1.5px solid var(--line);
+      border-radius: 9px;
+      padding: 7px 36px 7px 14px;
+      font-size: .82rem;
+      font-family: inherit;
+      font-weight: 600;
+      color: var(--text);
+      background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+      cursor: pointer;
+      min-width: 240px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .date-range-select:hover { border-color: var(--accent); }
+    .date-range-select:focus { outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255,122,26,.15); }
+    .preset-btn {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 5px 13px;
+      font-size: .78rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--muted);
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    .preset-btn:hover, .preset-btn.active {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }th, initial-scale=1.0" />
+  <title>Log Aggregation Intelligence Dashboard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+
+    :root {
+      --bg: #f8f5f2;
+      --panel: #ffffff;
+      --ink: #1a1a1a;
+      --muted: #5b544d;
+      --line: #e6ddd6;
+      --accent: #ff7a1a;
+      --accent-2: #121212;
+      --accent-3: #ff9f43;
+      --danger: #c03a3a;
+      --warning: #b85a00;
+      --success: #2f7a3f;
+      --hero-from: #0f0f0f;
+      --hero-mid: #2a2520;
+      --hero-to: #ff7a1a;
+      --hero-hot: #ffb168;
+      --card-shadow: 0 2px 12px rgba(15,43,70,0.08), 0 1px 3px rgba(15,43,70,0.05);
+      --card-shadow-hover: 0 8px 28px rgba(15,43,70,0.14), 0 2px 6px rgba(15,43,70,0.08);
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 5% -8%, #fff0df 0%, transparent 48%),
+        radial-gradient(900px 600px at 100% 0%,  #ffe4c8 0%, transparent 50%),
+        radial-gradient(700px 400px at 60% 100%, #f3ebe4 0%, transparent 55%),
+        var(--bg);
+      min-height: 100vh;
+    }
+
+    .container {
+      width: min(1160px, 92vw);
+      margin: 32px auto 48px;
+      animation: fade-in 420ms cubic-bezier(.22,.68,0,1.1);
+    }
+
+    .hero {
+      background: linear-gradient(130deg, var(--hero-from) 0%, var(--hero-mid) 55%, var(--hero-to) 100%);
+      color: #fff;
+      border-radius: 22px;
+      padding: 28px 30px;
+      box-shadow: 0 16px 40px rgba(5,0,74,0.32);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 80% -10%, rgba(255,255,255,0.15) 0%, transparent 55%),
+        radial-gradient(circle at 8% 108%, rgba(255,255,255,0.11) 0%, transparent 48%),
+        linear-gradient(105deg, transparent 72%, rgba(255,94,79,0.30) 100%);
+      pointer-events: none;
+    }
+
+    .hero-bar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      position: relative;
+    }
+
+    .hero-icon {
+      width: 54px;
+      height: 54px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      margin-bottom: 6px;
+      background: rgba(255,255,255,0.16);
+      border: 1px solid rgba(255,255,255,0.38);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 14px rgba(0,0,0,0.16);
+      backdrop-filter: blur(4px);
+    }
+
+    .hero-icon svg {
+      width: 28px;
+      height: 28px;
+      stroke: #fff;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      min-width: 175px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: clamp(1.35rem, 2.3vw, 2.1rem);
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+
+    .hero p {
+      margin: 6px 0 0;
+      color: rgba(255,255,255,0.92);
+      font-size: 0.96rem;
+    }
+
+    .hero-badges {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+
+    .hero-badge {
+      background: rgba(255,255,255,0.17);
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 3px 11px;
+      color: rgba(255,255,255,0.95);
+      letter-spacing: 0.3px;
+    }
+
+    .metrics {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      padding: 18px 18px 16px;
+      box-shadow: var(--card-shadow);
+      transition: box-shadow 200ms, transform 200ms;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric:hover {
+      box-shadow: var(--card-shadow-hover);
+      transform: translateY(-2px);
+    }
+
+    .metric::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .metric:nth-child(1)::after { background: linear-gradient(90deg, #121212, #ff7a1a); }
+    .metric:nth-child(2)::after { background: linear-gradient(90deg, #c03a3a, #dd6464); }
+    .metric:nth-child(3)::after { background: linear-gradient(90deg, #8a4700, #b85a00); }
+    .metric:nth-child(4)::after { background: linear-gradient(90deg, #2a2520, #ff9f43); }
+
+    .metric-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .icon-badge {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      border: 1px solid #e5cbb1;
+      background: linear-gradient(160deg, #fff1e3 0%, #ffe2c3 100%);
+      color: #121212;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+      flex-shrink: 0;
+    }
+
+    .icon-badge svg {
+      width: 17px;
+      height: 17px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .metric-icon {
+      opacity: 0.92;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 600;
+    }
+
+    .metric .value {
+      margin-top: 10px;
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--ink);
+      line-height: 1;
+      letter-spacing: -0.5px;
+    }
+
+    .grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      box-shadow: var(--card-shadow);
+      overflow: hidden;
+      transition: box-shadow 200ms;
+    }
+
+    .card:hover {
+      box-shadow: var(--card-shadow-hover);
+    }
+
+    .card-header {
+      display: flex;
       align-items: center;
       gap: 8px;
+      padding: 16px 18px 0;
+    }
+
+    .card-header-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+    }
+
+    .card h2 {
+      margin: 0;
+      font-size: 0.97rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.1px;
+    }
+
+    .canvas-wrap {
+      padding: 12px 16px 16px;
+      height: 300px;
+    }
+
+    .table-wrap {
+      margin-top: 14px;
       background: var(--panel);
-      border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 11px 16px;
+      border: 1px solid var(--line);
+      overflow: auto;
       box-shadow: var(--card-shadow);
     }
 
-    .filter-strip label {
-      font-size: 0.79rem;
-      color: var(--muted);
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 740px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.91rem;
+    }
+
+    th {
+      background: linear-gradient(180deg, #f7eee5 0%, #f0e2d6 100%);
+      color: #3a3028;
+      font-size: 0.78rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-right: 2px;
+      letter-spacing: 0.55px;
+      position: sticky;
+      top: 0;
+      z-index: 1;
     }
 
-    .preset-btn {
-      background: var(--bg);
-      color: var(--ink);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 5px 13px;
-      font-size: 0.83rem;
-      font-weight: 600;
+    td.count {
+      font-weight: 800;
+      color: var(--accent-2);
+    }
+
+    tbody tr {
       cursor: pointer;
-      transition: background 100ms, border-color 100ms, transform 100ms;
+      transition: background 100ms;
     }
 
-    .preset-btn:hover {
-      background: #f3e4d7;
+    tbody tr:nth-child(even) {
+      background: #f9f3ec;
+    }
+
+    tbody tr:hover {
+      background: #f6e4d2;
+    }
+
+    tbody tr.row-selected {
+      background: #f0d5bd;
+      box-shadow: inset 3px 0 0 var(--accent-2);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 0.4px;
+    }
+
+    .s4 { background: linear-gradient(135deg, #8a4700, #b85a00); }
+    .s5 { background: linear-gradient(135deg, #c03a3a, #d85d5d); }
+
+    .toolbar {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .toolbar-left {
+      margin-right: auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #121212, #ff7a1a);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.86rem;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: filter 140ms, transform 120ms;
+    }
+
+    button:hover {
+      filter: brightness(0.93);
       transform: translateY(-1px);
     }
 
-    .preset-btn.active {
-      background: var(--accent-2);
-      color: #fff;
-      border-color: var(--accent-2);
-      box-shadow: 0 3px 10px rgba(18,18,18,0.28);
+    button:active {
+      transform: translateY(0);
     }
 
-    .date-sep { color: var(--line); font-size: 1rem; }
+    button:disabled {
+      cursor: wait;
+      opacity: 0.68;
+      filter: none;
+      transform: none;
+    }
 
-    input[type="date"] {
+    .secondary-btn {
+      background: rgba(255,255,255,0.20);
+      border: 1px solid rgba(255,255,255,0.42);
+      backdrop-filter: blur(8px);
+      font-size: 0.84rem;
+    }
+
+    .download-status {
+      min-height: 1em;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .toolbar-note {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .countdown-ring {
+      width: 16px;
+      height: 16px;
+      transform: rotate(-90deg);
+    }
+
+    .countdown-ring circle {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2.4;
+      stroke-dasharray: 44;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s linear;
+    }
+
+    .pagination-bar {
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .pagination-meta,
+    .pagination-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .pagination-meta label {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .pagination-select {
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 5px 10px;
-      font-size: 0.83rem;
+      padding: 6px 10px;
+      font-size: 0.84rem;
       color: var(--ink);
       background: var(--bg);
-      cursor: pointer;
     }
 
-    input[type="date"]:focus {
-      outline: 2px solid var(--accent-2);
-      outline-offset: 1px;
+    .page-btn {
+      background: var(--bg);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-weight: 700;
+      padding: 7px 14px;
+    }
+
+    .page-btn:not(:disabled):hover {
+      background: #f3e4d7;
+      border-color: #e0c3a8;
+    }
+
+    .page-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.4;
+      transform: none;
+    }
+
+    .page-indicator,
+    .pagination-summary {
+      color: var(--muted);
+      font-size: 0.84rem;
+      font-weight: 600;
     }
 
     .filter-active-badge {
-      margin-left: auto;
-      background: linear-gradient(90deg, #ffe8d2, #fff1e2);
-      color: var(--accent-2);
-      border: 1px solid #e7bf98;
-      border-radius: 999px;
-      font-size: 0.77rem;
+      font-size: .74rem;
       font-weight: 700;
-      padding: 3px 12px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: rgba(255,122,26,.12);
+      color: var(--accent);
       display: none;
     }
+
 
     /* ── Status code filter bar ── */
     .sc-filter-bar {
@@ -1244,21 +1723,13 @@
       <span class="ret-change">Configurable via LOG_RETENTION_DAYS</span>
     </div>
 
-    <!-- Date filter strip -->
-    <div class="filter-strip">
-      <label for="applyRange">Filter:</label>
-      <button class="preset-btn active" data-preset="all">All Time</button>
-      <button class="preset-btn" data-preset="today">Today</button>
-      <button class="preset-btn" data-preset="week">Last 7 Days</button>
-      <button class="preset-btn" data-preset="month">Last 30 Days</button>
-      <button class="preset-btn" id="quarterBtn" data-preset="quarter">Last 90 Days</button>
-      <span class="date-sep">|</span>
-      <label for="dateFrom">From</label>
-      <input type="date" id="dateFrom" />
-      <label for="dateTo">To</label>
-      <input type="date" id="dateTo" />
-      <button class="preset-btn" id="applyRange">Apply</button>
-      <span class="filter-active-badge" id="filterBadge">Custom range</span>
+    <!-- Date dropdown filter (Stories 4968/4970) -->
+    <div class="filter-strip" id="filterStrip">
+      <label for="dateRangeSelect">View logs up to:</label>
+      <select class="date-range-select" id="dateRangeSelect">
+        <option value="">-- Select date range --</option>
+      </select>
+      <span class="filter-active-badge" id="filterBadge"></span>
     </div>
 
     <section class="metrics">
@@ -1443,9 +1914,7 @@
     let selectedError = null;
     let chatHistory = [];
     let chatSessionId = '';
-    let activePreset = 'all';
-    let customFrom = '';
-    let customTo = '';
+
     let currentRows = [];
     let allRows = [];
     let statusCodeFilter = 'all';
@@ -1544,16 +2013,16 @@
 
     function buildApiUrl() {
       const params = new URLSearchParams();
-      if (activePreset !== 'custom') {
-        if (activePreset !== 'all') {
-          params.set('preset', activePreset);
-        }
-      } else {
-        if (customFrom) params.set('from', customFrom);
-        if (customTo) params.set('to', customTo);
+      const sel = document.getElementById('dateRangeSelect');
+      const selectedDate = sel ? sel.value : '';
+      if (selectedDate) {
+        params.set('date', selectedDate);
+      }
+      if (activeSource && activeSource !== 'all') {
+        params.set('source', activeSource);
       }
       const query = params.toString();
-      return query ? `/api/dashboard-data?${query}` : '/api/dashboard-data';
+      return query ? '/api/dashboard-data?' + query : '/api/dashboard-data';
     }
 
     function buildPdfUrl() {
@@ -1944,37 +2413,27 @@
       document.getElementById('m-api').textContent = data.summary.apiCount;
       document.getElementById('last-updated').textContent = `Last updated: ${fmtDate()}`;
 
-      // Story 4968/4970: update retention banner with values from server
+      // Story 4968/4970: update retention banner + build dropdown from server data
       if (data.filter && data.filter.retentionDays) {
         const days   = data.filter.retentionDays;
         const cutoff = data.filter.cutoffDate;
+        const today  = data.filter.today || new Date().toISOString().slice(0, 10);
 
-        // Show banner
+        // Show retention banner
         const banner = document.getElementById('retentionBanner');
         if (banner) {
           banner.style.display = 'flex';
-          document.getElementById('retDays').textContent   = days;
-          document.getElementById('retCutoff').textContent = cutoff || '—';
+          const daysEl = document.getElementById('retDays');
+          const coEl   = document.getElementById('retCutoff');
+          if (daysEl) daysEl.textContent   = days;
+          if (coEl)   coEl.textContent     = cutoff || '—';
         }
 
-        // Update "Last 90 Days" preset label to match actual retention
-        const qBtn = document.getElementById('quarterBtn');
-        if (qBtn) qBtn.textContent = 'Last ' + days + ' Days';
-
-        // Block dateFrom input: set min to cutoff so user can't pick older dates
-        const dfInput = document.getElementById('dateFrom');
-        if (dfInput && cutoff) {
-          dfInput.min = cutoff;
-          // If user had selected a date before cutoff, reset it
-          if (dfInput.value && dfInput.value < cutoff) {
-            dfInput.value = cutoff;
-          }
-        }
-
-        // Update "All Time" button tooltip to clarify it means within retention
-        const allBtn = document.querySelector('.preset-btn[data-preset="all"]');
-        if (allBtn) {
-          allBtn.title = 'Loads all data within the ' + days + '-day retention window';
+        // Build date dropdown options from the retention window
+        // Only builds once — if dropdown already has real options, skip
+        const sel = document.getElementById('dateRangeSelect');
+        if (sel && sel.options.length <= 1) {
+          buildDateDropdown(days, cutoff, today);
         }
       }
 
@@ -2289,47 +2748,102 @@
       }, 120);
     });
 
-    // Preset buttons
-    document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activePreset = btn.dataset.preset;
-        customFrom = '';
-        customTo = '';
-        document.getElementById('dateFrom').value = '';
-        document.getElementById('dateTo').value = '';
-        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById('filterBadge').style.display = 'none';
-        loadDashboard().catch(console.error);
-      });
-    });
+    // ── Date dropdown (Stories 4968/4970) ──────────────────────────────────
+    // Builds dropdown options from the server's retention window.
+    // Options: "Full period (N days)", then one entry per week/month
+    // going back to the retention cutoff.
+    function buildDateDropdown(retentionDays, cutoffDate, today) {
+      const sel = document.getElementById('dateRangeSelect');
+      if (!sel) return;
 
-    // Custom calendar range
-    document.getElementById('applyRange').addEventListener('click', () => {
-      let from = document.getElementById('dateFrom').value;
-      const to = document.getElementById('dateTo').value;
+      const todayDt   = new Date(today      + 'T00:00:00');
+      const cutoffDt  = new Date(cutoffDate + 'T00:00:00');
 
-      // Story 4970 AC3: enforce retention cutoff on custom date range
-      const cutoffEl = document.getElementById('retCutoff');
-      const cutoff   = cutoffEl ? cutoffEl.textContent.trim() : '';
-      if (cutoff && cutoff !== '—' && from && from < cutoff) {
-        from = cutoff;
-        document.getElementById('dateFrom').value = cutoff;
-        const banner = document.getElementById('retentionBanner');
-        if (banner) {
-          // Flash the banner orange to indicate correction
-          banner.style.borderLeftColor = '#e74c3c';
-          setTimeout(() => { banner.style.borderLeftColor = 'var(--accent)'; }, 1500);
-        }
+      // Compute fixed date strings
+      const todayStr  = today;
+      const last7Dt   = new Date(todayDt); last7Dt.setDate(last7Dt.getDate() - 7);
+      const last7Str  = last7Dt.toISOString().slice(0, 10);
+
+      // Clear and rebuild
+      sel.innerHTML = '';
+
+      // ── Fixed entries (always present regardless of retention) ──────────────
+
+      // 1. All Time — shows full retention window (no date cap)
+      const allOpt        = document.createElement('option');
+      allOpt.value        = '';
+      allOpt.textContent  = 'All Time';
+      sel.appendChild(allOpt);
+
+      // 2. Today
+      const todayOpt      = document.createElement('option');
+      todayOpt.value      = todayStr;
+      todayOpt.textContent = `Today — ${_fmtDateLabel(todayDt)}`;
+      sel.appendChild(todayOpt);
+
+      // 3. Last 7 Days (only shown if 7 days is within the retention window)
+      if (last7Dt >= cutoffDt) {
+        const last7Opt        = document.createElement('option');
+        last7Opt.value        = last7Str;
+        last7Opt.textContent  = `Last 7 Days — up to ${_fmtDateLabel(last7Dt)}`;
+        sel.appendChild(last7Opt);
       }
-      if (!from && !to) return;
-      activePreset = 'custom';
-      customFrom = from;
-      customTo   = to;
-      document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+
+      // ── Customer retention-based options ────────────────────────────────────
+      // Monthly steps going back through the retention window.
+      // Starts after 7 days so it doesn't duplicate the fixed entry above.
+
+      const options = [];
+      let cursor = new Date(todayDt);
+      cursor.setDate(cursor.getDate() - 30);  // start at 1 month back
+
+      while (cursor > cutoffDt) {
+        const dateStr  = cursor.toISOString().slice(0, 10);
+        const diffDays = Math.round((todayDt - cursor) / 86400000);
+        const months   = Math.round(diffDays / 30);
+
+        const label = months === 1
+          ? `Last 1 Month — up to ${_fmtDateLabel(cursor)}`
+          : `Last ${months} Months — up to ${_fmtDateLabel(cursor)}`;
+
+        const opt = document.createElement('option');
+        opt.value       = dateStr;
+        opt.textContent = label;
+        options.push(opt);
+
+        cursor.setDate(cursor.getDate() - 30);
+      }
+
+      options.forEach(o => sel.appendChild(o));
+
+      // ── Retention window summary at the bottom ───────────────────────────────
+      const divider       = document.createElement('option');
+      divider.disabled    = true;
+      divider.textContent = '───────────────';
+      sel.appendChild(divider);
+
+      const infoOpt       = document.createElement('option');
+      infoOpt.value       = cutoffDate;
+      infoOpt.textContent = `Retention window: ${retentionDays} days (from ${cutoffDate})`;
+      sel.appendChild(infoOpt);
+    }
+
+    function _fmtDateLabel(dt) {
+      return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    // Handle dropdown selection
+    document.getElementById('dateRangeSelect').addEventListener('change', function() {
+      const selectedDate = this.value;
       const badge = document.getElementById('filterBadge');
-      badge.style.display = 'inline-block';
-      badge.textContent = `${from || '...'} → ${to || '...'}`;
+      if (selectedDate) {
+        // Show badge with selected date
+        badge.style.display = 'inline-block';
+        const opt = this.options[this.selectedIndex];
+        badge.textContent   = opt.textContent.split('—')[0].trim();
+      } else {
+        badge.style.display = 'none';
+      }
       loadDashboard().catch(console.error);
     });
 
@@ -2612,15 +3126,7 @@
         loadDashboard().catch(console.error);
       });
     });
-    const _origBuildApiUrl = buildApiUrl;
-    buildApiUrl = function() {
-      const base = _origBuildApiUrl();
-      if (activeSource && activeSource !== 'all') {
-        const sep = base.includes('?') ? '&' : '?';
-        return base + sep + 'source=' + encodeURIComponent(activeSource);
-      }
-      return base;
-    };
+    // Note: source filter is now baked into buildApiUrl directly
 
     // ════════════════════════════════════════════════════════════════════
     // SERVICENOW — shared state
@@ -2746,7 +3252,7 @@
       finally{btn.textContent=orig;btn.disabled=false;}
     }
 
-// ════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════
     // CHAT TICKET BAR
     // ════════════════════════════════════════════════════════════════════
     function refreshChatTicketBar() {
@@ -3040,4 +3546,4 @@ Automated remediation triggered. Identifying root cause, executing fix, verifyin
   </script>
 
 </body>
-</html>    
+</html>
