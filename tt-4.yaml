@@ -1,0 +1,1997 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Log Aggregator ? ECS Fargate + ALB + CodeBuild + Bedrock + EFS
+  + Raw/Processed S3 Buckets + Lambda Processor + Scheduler
+  + Dummy App (SSL demo) + ServiceNow + Action Lambdas (SSL/Password/DB/Compute)
+  UPGRADED: All original resources preserved. New additions:
+  DummyApp ECS service, 5 action Lambdas, ServiceNow secret,
+  SSL cert secret, updated CodeBuild buildspec, new IAM roles.
+
+# ==============================================================================
+# METADATA
+# ==============================================================================
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "Environment" }
+        Parameters: [EnvironmentName]
+      - Label: { default: "Networking" }
+        Parameters: [VpcId, PublicSubnetIds, PrivateSubnetIds]
+      - Label: { default: "ECS Service Sizing" }
+        Parameters: [AppDesiredCount, DashboardDesiredCount, ChatbotDesiredCount,
+                     DummyAppDesiredCount, ContainerPort]
+      - Label: { default: "Source for CodeBuild (S3)" }
+        Parameters: [S3SourceBucket, S3SourceKey]
+      - Label: { default: "Bedrock / Secrets" }
+        Parameters: [BedrockAgentId, BedrockAgentAliasId, ServiceNowSecretName]
+      - Label: { default: "Log Processing" }
+        Parameters: [LogRetentionDays, ProcessedLogPrefix]
+      - Label: { default: "Lambda Scheduler (optional)" }
+        Parameters: [SchedulerState, SchedulerExpression, SchedulerTarget,
+                     LambdaLogRetentionDays]
+      - Label: { default: "Dummy App / Remediation" }
+        Parameters: [DummyAppServiceName, RdsDbInstanceId]
+      - Label: { default: "Real SSL ? optional, leave blank for demo" }
+        Parameters: [DomainName, HostedZoneId, AcmCertificateArn]
+
+# ==============================================================================
+# PARAMETERS  (all originals kept intact ? new ones appended)
+# ==============================================================================
+Parameters:
+
+  # ?? Original parameters (unchanged) ????????????????????????????????????????
+  EnvironmentName:
+    Type: String
+    Default: prod
+    Description: Short environment tag used in all resource names.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC where all resources will be created.
+
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: "Two PUBLIC subnets (different AZs) for the ALB."
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: "Two PRIVATE subnets (different AZs) for ECS tasks and EFS."
+
+  ContainerPort:
+    Type: Number
+    Default: 5000
+    Description: Port exposed by all three Flask containers.
+
+  AppDesiredCount:
+    Type: Number
+    Default: 1
+
+  DashboardDesiredCount:
+    Type: Number
+    Default: 1
+
+  ChatbotDesiredCount:
+    Type: Number
+    Default: 1
+
+  S3SourceBucket:
+    Type: String
+    Default: ""
+    Description: "S3 bucket holding the source ZIP (your artifact bucket)."
+
+  S3SourceKey:
+    Type: String
+    Default: "log-aggregator.zip"
+
+  BedrockAgentId:
+    Type: String
+    Default: "PLACEHOLDER_AGENT_ID"
+
+  BedrockAgentAliasId:
+    Type: String
+    Default: "TSTALIASID"
+
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+    AllowedValues: [30, 60, 90, 180, 365]
+    Description: >
+      Story 4968/4970: Days of data to retain.
+      Controls BOTH CloudWatch log group retention AND application data purging.
+      Log lines, CSV rows, and unique_errors.json entries older than this are
+      automatically purged during each conversion cycle.
+
+  ProcessedLogPrefix:
+    Type: String
+    Default: "processed/"
+
+  SchedulerState:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [ENABLED, DISABLED]
+
+  SchedulerExpression:
+    Type: String
+    Default: "rate(1 day)"
+
+  SchedulerTarget:
+    Type: String
+    Default: CODEBUILD
+    AllowedValues: [CODEBUILD, ECS_REDEPLOY, BOTH]
+
+  LambdaLogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
+
+  # ?? NEW parameters ??????????????????????????????????????????????????????????
+  DummyAppDesiredCount:
+    Type: Number
+    Default: 1
+    Description: Desired task count for the dummy-infra-app ECS service.
+
+  DummyAppServiceName:
+    Type: String
+    Default: "dummy-infra-app"
+    Description: Name used for dummy app ECS service and ECR repo.
+
+  ServiceNowSecretName:
+    Type: String
+    Default: "servicenow/credential"
+    Description: Secrets Manager secret name for ServiceNow credentials.
+
+  RdsDbInstanceId:
+    Type: String
+    Default: ""
+    Description: RDS instance identifier for DB remediation Lambda (leave blank for demo).
+
+  DomainName:
+    Type: String
+    Default: ""
+    Description: "Optional: real domain for HTTPS, e.g. app.example.com. Leave blank for demo."
+
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: "Optional: Route 53 Hosted Zone ID for DomainName. Leave blank for demo."
+
+  AcmCertificateArn:
+    Type: String
+    Default: ""
+    Description: "Optional: existing ACM cert ARN. Leave blank ? SSL Lambda provisions one."
+
+# ==============================================================================
+# CONDITIONS
+# ==============================================================================
+Conditions:
+  HasAcmCertificate: !Not [!Equals [!Ref AcmCertificateArn, ""]]
+  HasDomainName:     !Not [!Equals [!Ref DomainName, ""]]
+
+# ==============================================================================
+# RESOURCES
+# ==============================================================================
+Resources:
+
+  # ============================================================
+  # 1. ECR REPOSITORIES  (originals kept ? new dummy-app added)
+  # ============================================================
+  EcrAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "log-aggregator-app-${EnvironmentName}"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 5 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
+  EcrDashboardRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "log-aggregator-dashboard-${EnvironmentName}"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 5 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
+  EcrChatbotRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "log-aggregator-chatbot-${EnvironmentName}"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 5 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
+  # NEW
+  EcrDummyAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "log-aggregator-${DummyAppServiceName}-${EnvironmentName}"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 5 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
+  # ============================================================
+  # 2. S3 BUCKET ? CodeBuild artifact / source ZIP  (unchanged)
+  # ============================================================
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "log-aggregator-artifacts-${AWS::AccountId}-${EnvironmentName}"
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  # ============================================================
+  # 3. S3 BUCKET ? Raw logs  (unchanged)
+  # ============================================================
+  RawLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "log-aggregator-raw-logs-${AWS::AccountId}-${EnvironmentName}"
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireRawLogs
+            Status: Enabled
+            Prefix: "raw-logs/"
+            ExpirationInDays: !Ref LogRetentionDays
+          - Id: ExpireLambdaPackages
+            Status: Enabled
+            Prefix: "lambda/"
+            ExpirationInDays: 30
+
+  RawLogsBucketLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LogProcessorLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt RawLogsBucket.Arn
+
+  RawLogsBucketNotification:
+    Type: Custom::S3BucketNotification
+    DependsOn: RawLogsBucketLambdaPermission
+    Properties:
+      ServiceToken: !GetAtt S3NotificationSetupLambda.Arn
+      BucketName: !Ref RawLogsBucket
+      LambdaArn: !GetAtt LogProcessorLambda.Arn
+      Prefix: "raw-logs/"
+
+  # ============================================================
+  # 4. S3 BUCKET ? Processed logs  (unchanged)
+  # ============================================================
+  ProcessedLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "log-aggregator-processed-${AWS::AccountId}-${EnvironmentName}"
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldProcessedLogs
+            Status: Enabled
+            Prefix: !Ref ProcessedLogPrefix
+            ExpirationInDays: !Ref LogRetentionDays
+
+  # ============================================================
+  # 5. SECRETS MANAGER  (Bedrock unchanged ? ServiceNow + SSL NEW)
+  # ============================================================
+  BedrockSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "log-aggregator/bedrock-${EnvironmentName}"
+      Description: "Bedrock Agent credentials for the chatbot service"
+      SecretString: !Sub |
+        {
+          "BEDROCK_AGENT_ID": "${BedrockAgentId}",
+          "BEDROCK_AGENT_ALIAS_ID": "${BedrockAgentAliasId}"
+        }
+
+  # NEW ? ServiceNow credentials
+  # After stack deploys, update this secret with real values:
+  #   aws secretsmanager put-secret-value \
+  #     --secret-id servicenow/credential \
+  #     --secret-string '{"instance_url":"https://devXXXXX.service-now.com","username":"aws-log-aggregator","password":"YourPassword"}'
+  ServiceNowSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Ref ServiceNowSecretName
+      Description: "ServiceNow developer instance credentials for auto-remediation"
+      SecretString: |
+        {
+          "instance_url": "https://REPLACE_WITH_YOUR_INSTANCE.service-now.com",
+          "username":     "aws-log-aggregator",
+          "password":     "REPLACE_WITH_REAL_PASSWORD"
+        }
+
+  # NEW ? SSL cert ARN storage (SSL Lambda writes here after remediation)
+  SSLCertSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: "dummy-app/ssl-cert-arn"
+      Description: "Current SSL cert ARN managed by SSL remediation Lambda"
+      SecretString: |
+        {
+          "cert_arn":  "not-yet-provisioned",
+          "domain":    "api.dummy-app.internal",
+          "demo_mode": true
+        }
+
+  # ============================================================
+  # 6. EFS  (unchanged)
+  # ============================================================
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "EFS allow NFS from ECS tasks only"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref EcsTaskSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  SharedFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+
+  EfsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref SharedFileSystem
+      PosixUser:   { Uid: "1001", Gid: "1001" }
+      RootDirectory:
+        Path: "/shared"
+        CreationInfo: { OwnerUid: "1001", OwnerGid: "1001", Permissions: "0755" }
+
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref SharedFileSystem
+      SubnetId:     !Select [0, !Ref PrivateSubnetIds]
+      SecurityGroups: [!Ref EfsSecurityGroup]
+
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref SharedFileSystem
+      SubnetId:     !Select [1, !Ref PrivateSubnetIds]
+      SecurityGroups: [!Ref EfsSecurityGroup]
+
+  # ============================================================
+  # 7. SECURITY GROUPS
+  #    AlbSecurityGroup  ? added port 443 (NEW)
+  #    EcsTaskSecurityGroup ? added port 5001 for dummy app (NEW)
+  # ============================================================
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "ALB allow HTTP and HTTPS from internet"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # NEW ? port 443 for HTTPS (used when real SSL cert is attached)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  EcsTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "ECS Tasks allow traffic from ALB only"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+        # All containers use ContainerPort (5000) with path-based ALB routing
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # ============================================================
+  # 8. APPLICATION LOAD BALANCER
+  #    Existing resources unchanged. New target group + rules added.
+  # ============================================================
+  AppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "log-aggregator-alb-${EnvironmentName}"
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups: [!Ref AlbSecurityGroup]
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "lag-app-tg-${EnvironmentName}"
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckPath: /api/status
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  DashboardTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "lag-dashboard-tg-${EnvironmentName}"
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckPath: /api/status
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  ChatbotTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "lag-chatbot-tg-${EnvironmentName}"
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckPath: /api/status
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  # NEW ? Dummy app target group (port 5001)
+  DummyAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "lag-dummy-app-tg-${EnvironmentName}"
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  ListenerRuleDashboard:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values: ["/dashboard", "/dashboard/*"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DashboardTargetGroup
+
+  ListenerRuleChatbot:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 20
+      Conditions:
+        - Field: path-pattern
+          Values: ["/chatbot", "/chatbot/*"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ChatbotTargetGroup
+
+  # NEW ? Dummy app listener rules
+  ListenerRuleDummyAppRoot:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 30
+      Conditions:
+        - Field: path-pattern
+          Values: ["/dummy", "/dummy/*"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DummyAppTargetGroup
+
+  ListenerRuleDummyAppApi:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 31
+      Conditions:
+        - Field: path-pattern
+          Values: ["/api/dummy", "/api/dummy/*"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DummyAppTargetGroup
+
+  # NEW ? HTTPS listener (only created when AcmCertificateArn is provided)
+  AlbListenerHttps:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasAcmCertificate
+    Properties:
+      LoadBalancerArn: !Ref AppLoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref AcmCertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  # NEW ? Route 53 alias record (only created when DomainName is provided)
+  Route53AliasRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomainName
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt AppLoadBalancer.DNSName
+        EvaluateTargetHealth: true
+        HostedZoneId: "Z35SXDOTRQ7X7K"   # us-east-1 ALB zone ID
+
+  # ============================================================
+  # 9. IAM ROLES
+  #    Existing roles kept intact. New roles + policies added.
+  # ============================================================
+
+  # UNCHANGED
+  EcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-ecs-exec-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - kms:Decrypt
+                Resource:
+                  - !Ref BedrockSecret
+                  - !Ref SSLCertSecret
+                  - !Ref ServiceNowSecret
+
+  # UPDATED ? added ReadServiceNowSecret policy for dashboard /api/snow-ticket route
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-ecs-task-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: "*"
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref BedrockSecret
+                  - !Ref ServiceNowSecret
+                  - !Ref SSLCertSecret
+        - PolicyName: ReadServiceNowSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref ServiceNowSecret
+        - PolicyName: RawLogsReadWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt RawLogsBucket.Arn
+                  - !Sub "${RawLogsBucket.Arn}/*"
+        - PolicyName: ProcessedLogsRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt ProcessedLogsBucket.Arn
+                  - !Sub "${ProcessedLogsBucket.Arn}/*"
+        - PolicyName: EfsAndObservability
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: !GetAtt SharedFileSystem.Arn
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: "*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: LogAggregator
+
+  # UNCHANGED
+  LogProcessorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-processor-lambda-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadRawWriteProcessed
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt RawLogsBucket.Arn
+                  - !Sub "${RawLogsBucket.Arn}/*"
+              - Effect: Allow
+                Action: [s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt ProcessedLogsBucket.Arn
+                  - !Sub "${ProcessedLogsBucket.Arn}/*"
+
+  # UPDATED CodeBuildRole ? added action Lambda update permissions
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-codebuild-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:DescribeRepositories
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                  - ecs:DescribeTaskDefinition
+                  - ecs:RegisterTaskDefinition
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt RawLogsBucket.Arn
+                  - !Sub "${RawLogsBucket.Arn}/*"
+              # Original ? log processor Lambda
+              - Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:PublishVersion
+                  - lambda:UpdateAlias
+                  - lambda:CreateAlias
+                  - lambda:GetFunction
+                  - lambda:GetAlias
+                  - lambda:ListVersionsByFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:WaitForFunctionUpdated
+                Resource: !GetAtt LogProcessorLambda.Arn
+              # NEW ? action Lambdas
+              # Note: using !Sub ARNs to avoid circular dependency with Lambda resources
+              - Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:WaitForFunctionUpdated
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-servicenow-${EnvironmentName}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-ssl-${EnvironmentName}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-password-reset-${EnvironmentName}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-db-${EnvironmentName}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-compute-${EnvironmentName}"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref BedrockSecret
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt EcsExecutionRole.Arn
+                  - !GetAtt EcsTaskRole.Arn
+
+  # UNCHANGED
+  LambdaSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-lambda-scheduler-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SchedulerPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                # Note: using !Sub ARN to avoid circular dependency with CodeBuildProject
+                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/log-aggregator-build-${EnvironmentName}"
+              - Effect: Allow
+                Action: [ecs:UpdateService, ecs:DescribeServices]
+                Resource: "*"
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref SchedulerNotificationTopic
+
+  # UNCHANGED
+  S3NotificationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-s3-notify-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PutBucketNotification
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutBucketNotification
+                Resource: !GetAtt RawLogsBucket.Arn
+
+  # UNCHANGED
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-events-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                # Note: using !Sub ARN to avoid circular dependency with SchedulerLambda
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-scheduler-${EnvironmentName}"
+
+  # NEW ? Role for all 5 action Lambdas
+  ActionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-action-lambda-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ActionLambdaPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:PutSecretValue
+                  - secretsmanager:CreateSecret
+                Resource:
+                  - !Ref ServiceNowSecret
+                  - !Ref SSLCertSecret
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dummy-app/*"
+              - Effect: Allow
+                Action:
+                  - acm:RequestCertificate
+                  - acm:DescribeCertificate
+                  - acm:ListCertificates
+                  - acm:AddTagsToCertificate
+                  - acm:DeleteCertificate
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:ListResourceRecordSets
+                  - route53:GetChange
+                  - route53:ListHostedZones
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeListeners
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeListenerCertificates
+                  - elasticloadbalancing:AddListenerCertificates
+                  - elasticloadbalancing:RemoveListenerCertificates
+                  - elasticloadbalancing:ModifyListener
+                Resource: "*"
+              - Effect: Allow
+                Action: [ecs:DescribeServices, ecs:UpdateService]
+                Resource: "*"
+              - Effect: Allow
+                Action: [rds:DescribeDBInstances, rds:ModifyDBInstance]
+                Resource: "*"
+              - Effect: Allow
+                Action: bedrock:InvokeAgent
+                Resource: "*"
+              # SSL Lambda invokes ServiceNow Lambda directly for updateTicket
+              # Note: using !Sub ARN to avoid circular dependency with ServiceNowLambda
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:log-aggregator-servicenow-${EnvironmentName}"
+
+  # NEW ? Dummy app task role (writes to S3, reads SSL cert secret)
+  DummyAppTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "log-aggregator-dummy-app-task-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DummyAppS3Write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt RawLogsBucket.Arn
+                  - !Sub "${RawLogsBucket.Arn}/*"
+        - PolicyName: ReadSSLCertSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref SSLCertSecret
+
+  # ============================================================
+  # 10. CLOUDWATCH LOG GROUPS  (originals unchanged ? new ones added)
+  # ============================================================
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/log-aggregator-app-${EnvironmentName}"
+      RetentionInDays: 30
+
+  DashboardLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/log-aggregator-dashboard-${EnvironmentName}"
+      RetentionInDays: 30
+
+  ChatbotLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/log-aggregator-chatbot-${EnvironmentName}"
+      RetentionInDays: 30
+
+  LogProcessorLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-processor-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  SchedulerLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-scheduler-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  S3NotificationLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-s3-notify-${EnvironmentName}"
+      RetentionInDays: 7
+
+  # NEW log groups
+  DummyAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/log-aggregator-dummy-app-${EnvironmentName}"
+      RetentionInDays: 14
+
+  ServiceNowLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-servicenow-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  SSLLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-ssl-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  PasswordResetLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-password-reset-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  DBLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-db-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  ComputeLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/log-aggregator-compute-${EnvironmentName}"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  # ============================================================
+  # 11. ECS CLUSTER  (unchanged)
+  # ============================================================
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "log-aggregator-cluster-${EnvironmentName}"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # ============================================================
+  # 12. ECS TASK DEFINITIONS  (originals unchanged ? dummy app NEW)
+  # ============================================================
+  AppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "log-aggregator-app-${EnvironmentName}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      Volumes:
+        - Name: shared-efs
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref SharedFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: app
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-app-${EnvironmentName}:latest"
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          Environment:
+            - { Name: APP_PORT,           Value: !Sub "${ContainerPort}" }
+            - { Name: APP_HOST,           Value: "0.0.0.0" }
+            - { Name: SERVICE_TYPE,       Value: app }
+            - { Name: LOG_LEVEL,          Value: INFO }
+            - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
+            - { Name: PYTHONUNBUFFERED,   Value: "1" }
+            - { Name: RAW_LOGS_BUCKET,    Value: !Ref RawLogsBucket }
+            - { Name: PROCESSED_BUCKET,   Value: !Ref ProcessedLogsBucket }
+            - { Name: RAW_LOGS_PREFIX,    Value: "raw-logs/" }
+            - { Name: LOG_RETENTION_DAYS, Value: !Sub "${LogRetentionDays}" }
+          Secrets:
+            # ServiceNow credentials injected from Secrets Manager
+            - Name: SERVICENOW_INSTANCE
+              ValueFrom: !Sub "${ServiceNowSecret}:instance_url::"
+            - Name: SERVICENOW_USERNAME
+              ValueFrom: !Sub "${ServiceNowSecret}:username::"
+            - Name: SERVICENOW_PASSWORD
+              ValueFrom: !Sub "${ServiceNowSecret}:password::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+          MountPoints:
+            - ContainerPath: /shared
+              SourceVolume: shared-efs
+          Essential: true
+          HealthCheck:
+            Command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status')\" || exit 1"]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  DashboardTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "log-aggregator-dashboard-${EnvironmentName}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      Volumes:
+        - Name: shared-efs
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref SharedFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: dashboard
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-dashboard-${EnvironmentName}:latest"
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          Environment:
+            - { Name: APP_PORT,            Value: !Sub "${ContainerPort}" }
+            - { Name: APP_HOST,            Value: "0.0.0.0" }
+            - { Name: SERVICE_TYPE,        Value: dashboard }
+            - { Name: LOG_LEVEL,           Value: INFO }
+            - { Name: AWS_DEFAULT_REGION,  Value: !Ref AWS::Region }
+            - { Name: PYTHONUNBUFFERED,    Value: "1" }
+            - { Name: RAW_LOGS_BUCKET,     Value: !Ref RawLogsBucket }
+            - { Name: PROCESSED_BUCKET,    Value: !Ref ProcessedLogsBucket }
+            - { Name: PROCESSED_LOG_PREFIX, Value: !Ref ProcessedLogPrefix }
+            - { Name: LOG_RETENTION_DAYS,   Value: !Sub "${LogRetentionDays}" }
+            - { Name: AWS_SECRETS_NAME,    Value: !Sub "log-aggregator/bedrock-${EnvironmentName}" }
+            # NEW ? ServiceNow secret name for /api/snow-ticket polling route
+            - { Name: SERVICENOW_SECRET_NAME, Value: !Ref ServiceNowSecretName }
+            - { Name: AWS_DEFAULT_REGION,     Value: !Ref AWS::Region }
+          Secrets:
+            - Name: BEDROCK_AGENT_ID
+              ValueFrom: !Sub "${BedrockSecret}:BEDROCK_AGENT_ID::"
+            - Name: BEDROCK_AGENT_ALIAS_ID
+              ValueFrom: !Sub "${BedrockSecret}:BEDROCK_AGENT_ALIAS_ID::"
+            # ServiceNow credentials injected from Secrets Manager
+            # servicenow_client.py reads these via SERVICENOW_SECRET_NAME env var
+            # but also supports direct injection for backward compat
+            - Name: SERVICENOW_INSTANCE
+              ValueFrom: !Sub "${ServiceNowSecret}:instance_url::"
+            - Name: SERVICENOW_USERNAME
+              ValueFrom: !Sub "${ServiceNowSecret}:username::"
+            - Name: SERVICENOW_PASSWORD
+              ValueFrom: !Sub "${ServiceNowSecret}:password::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref DashboardLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: dashboard
+          MountPoints:
+            - ContainerPath: /shared
+              SourceVolume: shared-efs
+          Essential: true
+          HealthCheck:
+            Command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status')\" || exit 1"]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  ChatbotTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "log-aggregator-chatbot-${EnvironmentName}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: chatbot
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-chatbot-${EnvironmentName}:latest"
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          Environment:
+            - { Name: APP_PORT,            Value: !Sub "${ContainerPort}" }
+            - { Name: APP_HOST,            Value: "0.0.0.0" }
+            - { Name: SERVICE_TYPE,        Value: chatbot }
+            - { Name: LOG_LEVEL,           Value: INFO }
+            - { Name: AWS_DEFAULT_REGION,  Value: !Ref AWS::Region }
+            - { Name: PYTHONUNBUFFERED,    Value: "1" }
+            - { Name: PROCESSED_BUCKET,    Value: !Ref ProcessedLogsBucket }
+            - { Name: AWS_SECRETS_NAME,    Value: !Sub "log-aggregator/bedrock-${EnvironmentName}" }
+          Secrets:
+            - Name: BEDROCK_AGENT_ID
+              ValueFrom: !Sub "${BedrockSecret}:BEDROCK_AGENT_ID::"
+            - Name: BEDROCK_AGENT_ALIAS_ID
+              ValueFrom: !Sub "${BedrockSecret}:BEDROCK_AGENT_ALIAS_ID::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ChatbotLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: chatbot
+          Essential: true
+          HealthCheck:
+            Command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status')\" || exit 1"]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  # NEW ? Dummy app task definition
+  DummyAppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "log-aggregator-${DummyAppServiceName}-${EnvironmentName}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt EcsExecutionRole.Arn
+      TaskRoleArn: !GetAtt DummyAppTaskRole.Arn
+      ContainerDefinitions:
+        - Name: dummy-app
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-${DummyAppServiceName}-${EnvironmentName}:latest"
+          PortMappings:
+            - ContainerPort: 5001
+              Protocol: tcp
+          Environment:
+            - { Name: APP_PORT,           Value: !Sub "${ContainerPort}" }
+            - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
+            - { Name: RAW_LOGS_BUCKET,    Value: !Ref RawLogsBucket }
+            - { Name: RAW_LOGS_PREFIX,    Value: "raw-logs/" }
+            - { Name: PYTHONUNBUFFERED,   Value: "1" }
+            - { Name: DEMO_MODE,          Value: "true" }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref DummyAppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: dummy-app
+          Essential: true
+          HealthCheck:
+            Command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+
+  # ============================================================
+  # 13. ECS SERVICES  (originals unchanged ? dummy app NEW)
+  # ============================================================
+  AppService:
+    Type: AWS::ECS::Service
+    DependsOn: [AlbListener, EfsMountTargetA, EfsMountTargetB]
+    Properties:
+      ServiceName: !Sub "log-aggregator-app-svc-${EnvironmentName}"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref AppTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref AppDesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref EcsTaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref AppTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+
+  DashboardService:
+    Type: AWS::ECS::Service
+    DependsOn: [AlbListener, ListenerRuleDashboard, EfsMountTargetA, EfsMountTargetB]
+    Properties:
+      ServiceName: !Sub "log-aggregator-dashboard-svc-${EnvironmentName}"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref DashboardTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref DashboardDesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref EcsTaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: dashboard
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref DashboardTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+
+  ChatbotService:
+    Type: AWS::ECS::Service
+    DependsOn: [AlbListener, ListenerRuleChatbot]
+    Properties:
+      ServiceName: !Sub "log-aggregator-chatbot-svc-${EnvironmentName}"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref ChatbotTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref ChatbotDesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref EcsTaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: chatbot
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref ChatbotTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+
+  # NEW ? Dummy app ECS service
+  DummyAppService:
+    Type: AWS::ECS::Service
+    DependsOn: [AlbListener, ListenerRuleDummyAppRoot, ListenerRuleDummyAppApi]
+    Properties:
+      ServiceName: !Sub "${DummyAppServiceName}-svc-${EnvironmentName}"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref DummyAppTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref DummyAppDesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref EcsTaskSecurityGroup]
+      LoadBalancers:
+        - ContainerName: dummy-app
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref DummyAppTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+
+  # ============================================================
+  # 14. LAMBDA ? Log Processor  (unchanged)
+  # ============================================================
+  LogProcessorLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: LogProcessorLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-processor-${EnvironmentName}"
+      Description: "S3-triggered: converts raw logs to CSV+JSON in the processed bucket"
+      Runtime: python3.12
+      Handler: lambda_handler.handler
+      Role: !GetAtt LogProcessorLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          RAW_LOGS_BUCKET:  !Ref RawLogsBucket
+          PROCESSED_BUCKET: !Ref ProcessedLogsBucket
+          PROCESSED_PREFIX: !Ref ProcessedLogPrefix
+          LOG_LEVEL:        INFO
+      Code:
+        ZipFile: |
+          import os, json, boto3, urllib.parse
+          s3 = boto3.client("s3")
+          PROCESSED_BUCKET = os.environ["PROCESSED_BUCKET"]
+          PROCESSED_PREFIX = os.environ.get("PROCESSED_PREFIX", "processed/")
+          def handler(event, context):
+              print(f"[STUB] Run CodeBuild to deploy real handler.")
+              for record in event.get("Records", []):
+                  bucket = record["s3"]["bucket"]["name"]
+                  key    = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
+                  print(f"[STUB] Would process s3://{bucket}/{key}")
+              return {"statusCode": 200}
+
+  # ============================================================
+  # 15. CUSTOM RESOURCE ? S3 notification  (unchanged)
+  # ============================================================
+  S3NotificationSetupLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: S3NotificationLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-s3-notify-setup-${EnvironmentName}"
+      Description: "One-time custom resource: wires raw-logs S3 event to LogProcessorLambda"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt S3NotificationLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3, json, urllib.request
+          s3 = boto3.client("s3")
+          def cfn_respond(event, context, status, reason="OK"):
+              body = json.dumps({
+                  "Status": status, "Reason": reason,
+                  "PhysicalResourceId": event.get("PhysicalResourceId", context.log_stream_name),
+                  "StackId": event["StackId"], "RequestId": event["RequestId"],
+                  "LogicalResourceId": event["LogicalResourceId"],
+              }).encode()
+              req = urllib.request.Request(url=event["ResponseURL"], data=body,
+                                           headers={"Content-Type": ""}, method="PUT")
+              urllib.request.urlopen(req)
+          def handler(event, context):
+              print(json.dumps(event))
+              p = event["ResourceProperties"]
+              bucket = p["BucketName"]; fn_arn = p["LambdaArn"]; prefix = p.get("Prefix", "raw-logs/")
+              try:
+                  if event["RequestType"] in ("Create", "Update"):
+                      s3.put_bucket_notification_configuration(
+                          Bucket=bucket,
+                          NotificationConfiguration={"LambdaFunctionConfigurations": [{
+                              "LambdaFunctionArn": fn_arn,
+                              "Events": ["s3:ObjectCreated:*"],
+                              "Filter": {"Key": {"FilterRules": [{"Name": "prefix", "Value": prefix}]}}
+                          }]})
+                  else:
+                      s3.put_bucket_notification_configuration(Bucket=bucket, NotificationConfiguration={})
+                  cfn_respond(event, context, "SUCCESS")
+              except Exception as e:
+                  cfn_respond(event, context, "FAILED", str(e))
+
+  # ============================================================
+  # NEW ? Action Lambdas (5)  All start as stubs. CodeBuild deploys real code.
+  # ============================================================
+  ServiceNowLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: ServiceNowLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-servicenow-${EnvironmentName}"
+      Description: >
+        Bedrock action group: createIncident, getTicketStatus, updateTicket.
+        DEMO_MODE=true by default. Set false after configuring servicenow/credential.
+        Stub replaced by CodeBuild.
+      Runtime: python3.12
+      Handler: servicenow_lambda_handler.handler
+      Role: !GetAtt ActionLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          SERVICENOW_SECRET_NAME: !Ref ServiceNowSecretName
+          DEMO_MODE:              "true"
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              fn = event.get("function","createIncident")
+              body = '{"ticket_number":"INC_STUB_001","status":"stub","note":"run CodeBuild","ticket_url":"#"}'
+              return {"actionGroup": event.get("actionGroup",""), "function": fn,
+                      "functionResponse": {"responseBody": {"TEXT": {"body": body}}}}
+
+  SSLRemediationLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: SSLLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-ssl-${EnvironmentName}"
+      Description: >
+        Bedrock action: SSL cert remediation. DEMO_MODE=true skips real ACM/Route53/ELB.
+        Always calls ServiceNow updateTicket + notifies dummy app.
+        Stub replaced by CodeBuild.
+      Runtime: python3.12
+      Handler: ssl_lambda_handler.handler
+      Role: !GetAtt ActionLambdaRole.Arn
+      Timeout: 600
+      MemorySize: 256
+      Environment:
+        Variables:
+          DEMO_MODE:                "true"
+          SSL_DOMAIN:               !Ref DomainName
+          HOSTED_ZONE_ID:           !Ref HostedZoneId
+          ALB_ARN:                  !GetAtt AppLoadBalancer.LoadBalancerArn
+          SSL_CERT_SECRET_NAME:     "dummy-app/ssl-cert-arn"
+          DUMMY_APP_URL:            !Sub "http://${AppLoadBalancer.DNSName}"
+          SNOW_LAMBDA_NAME:         !Ref ServiceNowLambda
+          ENVIRONMENT_NAME:         !Ref EnvironmentName
+          SERVICENOW_SECRET_NAME:   !Ref ServiceNowSecretName
+          VALIDATION_POLL_SECONDS:  "300"
+          VALIDATION_POLL_INTERVAL: "15"
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {"actionGroup": event.get("actionGroup",""), "function": event.get("function",""),
+                      "functionResponse": {"responseBody": {"TEXT": {"body": '{"status":"stub","note":"run CodeBuild","demo_mode":true}'}}}}
+
+  PasswordResetLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: PasswordResetLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-password-reset-${EnvironmentName}"
+      Description: "Bedrock action: Secrets Manager password rotation. Stub replaced by CodeBuild."
+      Runtime: python3.12
+      Handler: password_reset_lambda_handler.handler
+      Role: !GetAtt ActionLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          DUMMY_APP_URL:          !Sub "http://${AppLoadBalancer.DNSName}"
+          SERVICE_ACCOUNT_SECRET: "dummy-app/service-account-credentials"
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {"actionGroup": event.get("actionGroup",""), "function": event.get("function",""),
+                      "functionResponse": {"responseBody": {"TEXT": {"body": '{"status":"stub","note":"run CodeBuild"}'}}}}
+
+  DBRemediationLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: DBLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-db-${EnvironmentName}"
+      Description: "Bedrock action: RDS storage/class upgrade. Stub replaced by CodeBuild."
+      Runtime: python3.12
+      Handler: db_lambda_handler.handler
+      Role: !GetAtt ActionLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          RDS_DB_INSTANCE_ID: !Ref RdsDbInstanceId
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {"actionGroup": event.get("actionGroup",""), "function": event.get("function",""),
+                      "functionResponse": {"responseBody": {"TEXT": {"body": '{"status":"stub","note":"run CodeBuild"}'}}}}
+
+  ComputeRemediationLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: ComputeLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-compute-${EnvironmentName}"
+      Description: "Bedrock action: ECS scale-up. Stub replaced by CodeBuild."
+      Runtime: python3.12
+      Handler: compute_lambda_handler.handler
+      Role: !GetAtt ActionLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          ECS_CLUSTER_NAME:       !Ref EcsCluster
+          DUMMY_APP_SERVICE_NAME: !Sub "${DummyAppServiceName}-svc-${EnvironmentName}"
+          MAX_DESIRED_COUNT:      "4"
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              return {"actionGroup": event.get("actionGroup",""), "function": event.get("function",""),
+                      "functionResponse": {"responseBody": {"TEXT": {"body": '{"status":"stub","note":"run CodeBuild"}'}}}}
+
+  # NEW ? Bedrock resource-based permissions on action Lambdas
+  ServiceNowLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ServiceNowLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  SSLLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt SSLRemediationLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  PasswordResetLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PasswordResetLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  DBLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DBRemediationLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  ComputeLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ComputeRemediationLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ============================================================
+  # 16. CODEBUILD PROJECT
+  #     UPDATED: builds dummy-app image, packages all 6 Lambdas,
+  #     deploys all action Lambdas, redeploys dummy-app service.
+  #     All original 3-image build + log processor steps preserved.
+  # ============================================================
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "log-aggregator-build-${EnvironmentName}"
+      Description: "Builds 4 Docker images, packages 6 Lambdas, pushes to ECR, deploys ECS + Lambdas"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - { Name: AWS_DEFAULT_REGION,    Value: !Ref AWS::Region }
+          - { Name: AWS_ACCOUNT_ID,        Value: !Ref AWS::AccountId }
+          - { Name: ECR_APP_URI,           Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-app-${EnvironmentName}" }
+          - { Name: ECR_DASHBOARD_URI,     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-dashboard-${EnvironmentName}" }
+          - { Name: ECR_CHATBOT_URI,       Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-chatbot-${EnvironmentName}" }
+          # NEW
+          - { Name: ECR_DUMMY_APP_URI,     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-${DummyAppServiceName}-${EnvironmentName}" }
+          - { Name: ECS_CLUSTER_NAME,      Value: !Ref EcsCluster }
+          - { Name: APP_SERVICE_NAME,      Value: !Sub "log-aggregator-app-svc-${EnvironmentName}" }
+          - { Name: DASHBOARD_SERVICE_NAME, Value: !Sub "log-aggregator-dashboard-svc-${EnvironmentName}" }
+          - { Name: CHATBOT_SERVICE_NAME,  Value: !Sub "log-aggregator-chatbot-svc-${EnvironmentName}" }
+          # NEW
+          - { Name: DUMMY_APP_SERVICE_NAME, Value: !Sub "${DummyAppServiceName}-svc-${EnvironmentName}" }
+          - { Name: ARTIFACT_BUCKET,       Value: !Ref ArtifactBucket }
+          - { Name: RAW_LOGS_BUCKET,       Value: !Ref RawLogsBucket }
+          - { Name: PROCESSED_BUCKET,      Value: !Ref ProcessedLogsBucket }
+          - { Name: LOG_RETENTION_DAYS,    Value: !Sub "${LogRetentionDays}" }
+          - { Name: LAMBDA_FUNCTION_NAME,  Value: !Ref LogProcessorLambda }
+          # NEW ? action Lambda function names
+          - { Name: LAMBDA_SERVICENOW,     Value: !Ref ServiceNowLambda }
+          - { Name: LAMBDA_SSL,            Value: !Ref SSLRemediationLambda }
+          - { Name: LAMBDA_PASSWORD,       Value: !Ref PasswordResetLambda }
+          - { Name: LAMBDA_DB,             Value: !Ref DBRemediationLambda }
+          - { Name: LAMBDA_COMPUTE,        Value: !Ref ComputeRemediationLambda }
+      Source:
+        Type: S3
+        Location: !Sub "${S3SourceBucket}/${S3SourceKey}"
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              DOCKER_BUILDKIT: "1"
+          phases:
+            install:
+              runtime-versions:
+                python: "3.12"
+              commands:
+                - pip install --upgrade pip awscli --quiet
+            pre_build:
+              commands:
+                - echo "=== ECR Login ==="
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION |
+                    docker login --username AWS --password-stdin
+                    $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+                - export IMAGE_TAG=$(date +%Y%m%d%H%M%S)
+                - echo "Image tag -> $IMAGE_TAG"
+                - ls -la
+                - |
+                  if [ ! -f "dockerfiles/Dockerfile.app" ]; then
+                    FOUND=$(find . -name "Dockerfile.app" | head -1)
+                    if [ -n "$FOUND" ]; then
+                      NESTED=$(dirname $(dirname $FOUND))
+                      echo "Flattening from $NESTED..."
+                      cp -r $NESTED/. .
+                    fi
+                  fi
+                - echo "=== Checking required folders ==="
+                - ls Application/ Conversion/ Dashboard/ DummyApp/ 2>&1 || echo "WARNING: folders missing"
+                - ls servicenow_client.py 2>&1 || echo "WARNING: servicenow_client.py missing"
+                - ls dockerfiles/ 2>&1 || echo "WARNING: dockerfiles/ missing"
+            build:
+              commands:
+                - echo "=== Building App image ==="
+                - docker build --cache-from $ECR_APP_URI:latest
+                    -f dockerfiles/Dockerfile.app
+                    -t $ECR_APP_URI:$IMAGE_TAG -t $ECR_APP_URI:latest .
+                - echo "=== Building Dashboard image ==="
+                - docker build --cache-from $ECR_DASHBOARD_URI:latest
+                    -f dockerfiles/Dockerfile.dashboard
+                    -t $ECR_DASHBOARD_URI:$IMAGE_TAG -t $ECR_DASHBOARD_URI:latest .
+                - echo "=== Building Chatbot image ==="
+                - docker build --cache-from $ECR_CHATBOT_URI:latest
+                    -f dockerfiles/Dockerfile.chatbot
+                    -t $ECR_CHATBOT_URI:$IMAGE_TAG -t $ECR_CHATBOT_URI:latest .
+                - echo "=== Building Dummy App image ==="
+                - docker build --cache-from $ECR_DUMMY_APP_URI:latest
+                    -f dockerfiles/Dockerfile.dummy-app
+                    -t $ECR_DUMMY_APP_URI:$IMAGE_TAG -t $ECR_DUMMY_APP_URI:latest .
+                - echo "=== Packaging Lambda Processor (real handler) ==="
+                - rm -rf /tmp/lambda-pkg && mkdir -p /tmp/lambda-pkg
+                - cp lambda/lambda_handler.py /tmp/lambda-pkg/
+                - cd /tmp/lambda-pkg
+                - zip -r9q /tmp/log-processor-$IMAGE_TAG.zip . -x "*.pyc" -x "__pycache__/*"
+                - cd $CODEBUILD_SRC_DIR
+                - aws s3 cp /tmp/log-processor-$IMAGE_TAG.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/log-processor-$IMAGE_TAG.zip
+                - aws s3 cp /tmp/log-processor-$IMAGE_TAG.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/log-processor-latest.zip
+                - echo "=== Packaging ServiceNow Lambda ==="
+                - rm -rf /tmp/lam-snow && mkdir -p /tmp/lam-snow
+                - cp lambda/servicenow_lambda_handler.py /tmp/lam-snow/
+                - cd /tmp/lam-snow && zip -r9q /tmp/lam-servicenow.zip . -x "*.pyc"
+                - cd $CODEBUILD_SRC_DIR
+                - aws s3 cp /tmp/lam-servicenow.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/lam-servicenow-$IMAGE_TAG.zip
+                - echo "=== Packaging SSL Lambda ==="
+                - rm -rf /tmp/lam-ssl && mkdir -p /tmp/lam-ssl
+                - cp lambda/ssl_lambda_handler.py /tmp/lam-ssl/
+                - cd /tmp/lam-ssl && zip -r9q /tmp/lam-ssl.zip . -x "*.pyc"
+                - cd $CODEBUILD_SRC_DIR
+                - aws s3 cp /tmp/lam-ssl.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/lam-ssl-$IMAGE_TAG.zip
+                - echo "=== Packaging Password Reset Lambda ==="
+                - rm -rf /tmp/lam-pw && mkdir -p /tmp/lam-pw
+                - cp lambda/password_reset_lambda_handler.py /tmp/lam-pw/
+                - cd /tmp/lam-pw && zip -r9q /tmp/lam-password.zip . -x "*.pyc"
+                - cd $CODEBUILD_SRC_DIR
+                - aws s3 cp /tmp/lam-password.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/lam-password-$IMAGE_TAG.zip
+                - echo "=== Packaging DB Lambda ==="
+                - rm -rf /tmp/lam-db && mkdir -p /tmp/lam-db
+                - cp lambda/db_lambda_handler.py /tmp/lam-db/
+                - cd /tmp/lam-db && zip -r9q /tmp/lam-db.zip . -x "*.pyc"
+                - cd $CODEBUILD_SRC_DIR
+                - aws s3 cp /tmp/lam-db.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/lam-db-$IMAGE_TAG.zip
+                - echo "=== Packaging Compute Lambda ==="
+                - rm -rf /tmp/lam-compute && mkdir -p /tmp/lam-compute
+                - cp lambda/compute_lambda_handler.py /tmp/lam-compute/
+                - cd /tmp/lam-compute && zip -r9q /tmp/lam-compute.zip . -x "*.pyc"
+                - cd $CODEBUILD_SRC_DIR
+                - aws s3 cp /tmp/lam-compute.zip
+                    s3://$RAW_LOGS_BUCKET/lambda/lam-compute-$IMAGE_TAG.zip
+            post_build:
+              commands:
+                - echo "=== Pushing Docker images ==="
+                - docker push $ECR_APP_URI:$IMAGE_TAG       && docker push $ECR_APP_URI:latest
+                - docker push $ECR_DASHBOARD_URI:$IMAGE_TAG && docker push $ECR_DASHBOARD_URI:latest
+                - docker push $ECR_CHATBOT_URI:$IMAGE_TAG   && docker push $ECR_CHATBOT_URI:latest
+                - docker push $ECR_DUMMY_APP_URI:$IMAGE_TAG && docker push $ECR_DUMMY_APP_URI:latest
+                - echo "=== Deploying Lambda Processor ==="
+                - aws lambda update-function-code
+                    --function-name $LAMBDA_FUNCTION_NAME
+                    --s3-bucket $RAW_LOGS_BUCKET
+                    --s3-key lambda/log-processor-latest.zip
+                - aws lambda wait function-updated --function-name $LAMBDA_FUNCTION_NAME
+                - aws lambda publish-version --function-name $LAMBDA_FUNCTION_NAME
+                - echo "=== Deploying Action Lambdas ==="
+                - aws lambda update-function-code --function-name $LAMBDA_SERVICENOW
+                    --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-servicenow-$IMAGE_TAG.zip
+                - aws lambda wait function-updated --function-name $LAMBDA_SERVICENOW
+                - aws lambda update-function-code --function-name $LAMBDA_SSL
+                    --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-ssl-$IMAGE_TAG.zip
+                - aws lambda wait function-updated --function-name $LAMBDA_SSL
+                - aws lambda update-function-code --function-name $LAMBDA_PASSWORD
+                    --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-password-$IMAGE_TAG.zip
+                - aws lambda wait function-updated --function-name $LAMBDA_PASSWORD
+                - aws lambda update-function-code --function-name $LAMBDA_DB
+                    --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-db-$IMAGE_TAG.zip
+                - aws lambda wait function-updated --function-name $LAMBDA_DB
+                - aws lambda update-function-code --function-name $LAMBDA_COMPUTE
+                    --s3-bucket $RAW_LOGS_BUCKET --s3-key lambda/lam-compute-$IMAGE_TAG.zip
+                - aws lambda wait function-updated --function-name $LAMBDA_COMPUTE
+                - echo "=== Redeploying ECS Services ==="
+                - aws ecs update-service --cluster $ECS_CLUSTER_NAME
+                    --service $APP_SERVICE_NAME --force-new-deployment
+                - aws ecs update-service --cluster $ECS_CLUSTER_NAME
+                    --service $DASHBOARD_SERVICE_NAME --force-new-deployment
+                - aws ecs update-service --cluster $ECS_CLUSTER_NAME
+                    --service $CHATBOT_SERVICE_NAME --force-new-deployment
+                - aws ecs update-service --cluster $ECS_CLUSTER_NAME
+                    --service $DUMMY_APP_SERVICE_NAME --force-new-deployment
+                - echo "=== Build complete. Tag -> $IMAGE_TAG ==="
+          cache:
+            paths:
+              - "/root/.cache/pip/**/*"
+
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/codebuild/log-aggregator-${EnvironmentName}"
+          StreamName: build
+
+  # ============================================================
+  # 17. SNS TOPIC  (unchanged)
+  # ============================================================
+  SchedulerNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "log-aggregator-scheduler-notify-${EnvironmentName}"
+      DisplayName: "Log Aggregator Scheduler Alerts"
+
+  # ============================================================
+  # 18. LAMBDA ? Scheduler  (unchanged)
+  # ============================================================
+  SchedulerLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: SchedulerLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "log-aggregator-scheduler-${EnvironmentName}"
+      Description: "EventBridge-triggered: starts CodeBuild and/or force-redeploys ECS"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaSchedulerRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          CODEBUILD_PROJECT_NAME: !Ref CodeBuildProject
+          ECS_CLUSTER_NAME:       !Ref EcsCluster
+          APP_SERVICE_NAME:       !Sub "log-aggregator-app-svc-${EnvironmentName}"
+          DASHBOARD_SERVICE_NAME: !Sub "log-aggregator-dashboard-svc-${EnvironmentName}"
+          CHATBOT_SERVICE_NAME:   !Sub "log-aggregator-chatbot-svc-${EnvironmentName}"
+          SNS_TOPIC_ARN:          !Ref SchedulerNotificationTopic
+          SCHEDULER_TARGET:       !Ref SchedulerTarget
+      Code:
+        ZipFile: |
+          import os, json, boto3, traceback
+          from datetime import datetime, timezone
+          cb = boto3.client("codebuild"); ecs = boto3.client("ecs"); sns = boto3.client("sns")
+          PROJECT  = os.environ["CODEBUILD_PROJECT_NAME"]
+          CLUSTER  = os.environ["ECS_CLUSTER_NAME"]
+          SERVICES = [os.environ["APP_SERVICE_NAME"], os.environ["DASHBOARD_SERVICE_NAME"], os.environ["CHATBOT_SERVICE_NAME"]]
+          SNS_ARN  = os.environ["SNS_TOPIC_ARN"]
+          TARGET   = os.environ.get("SCHEDULER_TARGET", "CODEBUILD")
+          def _now(): return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          def start_codebuild():
+              bid = cb.start_build(projectName=PROJECT)["build"]["id"]
+              print(f"[CodeBuild] Started: {bid}"); return bid
+          def force_ecs_redeploy():
+              out = []
+              for svc in SERVICES:
+                  try: ecs.update_service(cluster=CLUSTER, service=svc, forceNewDeployment=True); out.append(f"  OK  {svc}")
+                  except Exception as e: out.append(f"  ERR {svc}: {e}")
+              return out
+          def notify(subject, msg):
+              try: sns.publish(TopicArn=SNS_ARN, Subject=subject, Message=msg)
+              except Exception: print(f"[SNS] Failed: {traceback.format_exc()}")
+          def handler(event, context):
+              lines = [f"Scheduler ran at {_now()}", f"Target: {TARGET}", ""]
+              try:
+                  if TARGET in ("CODEBUILD", "BOTH"): lines.append(f"[CodeBuild] {start_codebuild()}")
+                  if TARGET in ("ECS_REDEPLOY", "BOTH"): lines += ["[ECS] Redeploy:"] + force_ecs_redeploy()
+              except Exception:
+                  tb = traceback.format_exc(); lines.append(f"\nERROR:\n{tb}")
+                  notify(f"[ALERT] Scheduler FAILED ? {_now()}", "\n".join(lines)); raise
+              notify(f"[OK] Scheduler completed ? {_now()}", "\n".join(lines))
+              return {"statusCode": 200, "body": "\n".join(lines)}
+
+  SchedulerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt SchedulerLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledBuildRule.Arn
+
+  # ============================================================
+  # 19. EVENTBRIDGE RULE  (unchanged)
+  # ============================================================
+  ScheduledBuildRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "log-aggregator-build-schedule-${EnvironmentName}"
+      Description: "Fires scheduler Lambda on the configured schedule"
+      State: !Ref SchedulerState
+      ScheduleExpression: !Ref SchedulerExpression
+      Targets:
+        - Id: SchedulerLambdaTarget
+          Arn: !GetAtt SchedulerLambda.Arn
+
+# ==============================================================================
+# OUTPUTS  (all originals kept ? new ones appended)
+# ==============================================================================
+Outputs:
+
+  # ?? Original outputs (unchanged) ??????????????????????????????????????????
+  AlbUrl:
+    Description: "ALB DNS ? open in browser"
+    Value: !Sub "http://${AppLoadBalancer.DNSName}"
+
+  AppEndpoint:
+    Value: !Sub "http://${AppLoadBalancer.DNSName}/"
+
+  DashboardEndpoint:
+    Value: !Sub "http://${AppLoadBalancer.DNSName}/dashboard"
+
+  ChatbotEndpoint:
+    Value: !Sub "http://${AppLoadBalancer.DNSName}/chatbot"
+
+  EcrAppUri:
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-app-${EnvironmentName}"
+
+  EcrDashboardUri:
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-dashboard-${EnvironmentName}"
+
+  EcrChatbotUri:
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-chatbot-${EnvironmentName}"
+
+  EcsClusterName:
+    Value: !Ref EcsCluster
+
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+
+  RawLogsBucketName:
+    Value: !Ref RawLogsBucket
+
+  ProcessedLogsBucketName:
+    Value: !Ref ProcessedLogsBucket
+
+  LogProcessorLambdaName:
+    Value: !Ref LogProcessorLambda
+
+  LogProcessorLambdaArn:
+    Value: !GetAtt LogProcessorLambda.Arn
+
+  SchedulerLambdaName:
+    Value: !Ref SchedulerLambda
+
+  CodeBuildProjectName:
+    Value: !Ref CodeBuildProject
+
+  BedrockSecretArn:
+    Description: "Update BEDROCK_AGENT_ID here after creating your Bedrock Agent"
+    Value: !Ref BedrockSecret
+
+  SchedulerNotificationTopicArn:
+    Value: !Ref SchedulerNotificationTopic
+
+  # ?? New outputs ????????????????????????????????????????????????????????????
+  DummyAppEndpoint:
+    Description: "SSL Demo dashboard ? open this to run the demo"
+    Value: !Sub "http://${AppLoadBalancer.DNSName}/dummy"
+
+  EcrDummyAppUri:
+    Description: "ECR URI for dummy-infra-app"
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/log-aggregator-${DummyAppServiceName}-${EnvironmentName}"
+
+  AlbArn:
+    Description: "ALB ARN ? used by SSL Lambda env var ALB_ARN"
+    Value: !GetAtt AppLoadBalancer.LoadBalancerArn
+
+  ServiceNowLambdaArn:
+    Description: "Add to Bedrock servicenow_action_group"
+    Value: !GetAtt ServiceNowLambda.Arn
+
+  SSLLambdaArn:
+    Description: "Add to Bedrock ssl_remediation_action_group"
+    Value: !GetAtt SSLRemediationLambda.Arn
+
+  PasswordResetLambdaArn:
+    Description: "Add to Bedrock password_reset_action_group"
+    Value: !GetAtt PasswordResetLambda.Arn
+
+  DBLambdaArn:
+    Description: "Add to Bedrock db_remediation_action_group"
+    Value: !GetAtt DBRemediationLambda.Arn
+
+  ComputeLambdaArn:
+    Description: "Add to Bedrock compute_remediation_action_group"
+    Value: !GetAtt ComputeRemediationLambda.Arn
+
+  ServiceNowSecretArn:
+    Description: "Update with real ServiceNow credentials after ServiceNow setup"
+    Value: !Ref ServiceNowSecret
+
+  SSLCertSecretArn:
+    Description: "SSL Lambda writes renewed cert ARN here"
+    Value: !Ref SSLCertSecret
