@@ -79,7 +79,16 @@ def _read_unique_errors_data(conversion_dir: str) -> List[dict]:
             return []
         try:
             data = json.loads(text)
-            return data if isinstance(data, list) else []
+            if not isinstance(data, list):
+                return []
+            # Normalise: handle old 'Status code' (lowercase c) from previous Lambda version
+            normalised = []
+            for entry in data:
+                if 'Status code' in entry and 'Status Code' not in entry:
+                    entry = dict(entry)
+                    entry['Status Code'] = entry.pop('Status code')
+                normalised.append(entry)
+            return normalised
         except Exception:
             return []
     for fname in (UNIQUE_ERRORS_JSON_FILENAME, LEGACY_UNIQUE_ERRORS_JSON_FILENAME):
@@ -162,8 +171,10 @@ def _row_is_in_range(row_date: date,
 def _update_aggregated_error(aggregated, row,
                               row_date_str: str,
                               row_timestamp_str: str):
-    key = (row['Status code'], row[ERROR_CODE_KEY],
-           row[DESCRIPTION_KEY], row[API_KEY])
+    # Use .get() with fallback to handle both old 'Status code' and new 'Status Code'
+    sc_val = row.get('Status Code') or row.get('Status code', '')
+    key = (sc_val, row.get(ERROR_CODE_KEY, ''),
+           row.get(DESCRIPTION_KEY, ''), row.get(API_KEY, ''))
     if key not in aggregated:
         aggregated[key] = {'count': 0, 'dates': set(), 'last_seen': ''}
     aggregated[key]['count'] += 1
@@ -184,7 +195,7 @@ def _serialize_aggregated_errors(aggregated):
          COUNT_KEY: m['count'], LAST_SEEN_KEY: m['last_seen'],
          'Dates': sorted(m['dates'])}
         for k, m in sorted(aggregated.items())
-        if k[0].isdigit() and int(k[0]) >= 400 and k[1]
+        if k[0] and k[0].isdigit() and int(k[0]) >= 400 and k[1]
     ]
 
 
@@ -201,7 +212,9 @@ def _collect_unique_errors(conversion_dir, date_from, date_to):
         filtered = []
         for entry in raw:
             last_seen = entry.get(LAST_SEEN_KEY, '')
-            if last_seen and last_seen[:10] < cutoff_s:
+            # Only skip entries where last_seen is set AND older than cutoff
+            # Empty last_seen means it's a new/unprocessed entry — keep it
+            if last_seen and len(last_seen) >= 10 and last_seen[:10] < cutoff_s:
                 continue
             entry = dict(entry)
             entry['Dates'] = [d for d in entry.get('Dates', []) if d >= cutoff_s]
@@ -230,6 +243,9 @@ def _collect_unique_errors(conversion_dir, date_from, date_to):
             continue
         if not _row_is_in_range(row_date, date_from, date_to):
             continue
+        # Normalise 'Status code' → 'Status Code' for older CSV files
+        if 'Status code' in row and 'Status Code' not in row:
+            row['Status Code'] = row.pop('Status code')
         _update_aggregated_error(aggregated, row, row_date_str, row_timestamp_str)
 
     return _serialize_aggregated_errors(aggregated)
