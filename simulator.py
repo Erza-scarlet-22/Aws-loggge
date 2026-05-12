@@ -62,11 +62,13 @@ def create_simulator_blueprint(base_dir: str, log_filename: str, run_conversion_
     # Lock prevents concurrent simulation runs from corrupting the log file.
     _write_lock = threading.Lock()
 
-    # AWS / local mode detection
-    _RAW_BUCKET = os.environ.get('RAW_LOGS_BUCKET', '')
-    _RAW_PREFIX = os.environ.get('RAW_LOGS_PREFIX', 'raw-logs/')
-    _AWS_REGION = os.environ.get('AWS_DEFAULT_REGION', os.environ.get('AWS_REGION', 'us-east-1'))
-    _IS_AWS_SIM = bool(_RAW_BUCKET)
+    # AWS mode helpers — read env vars at call time, not at factory creation time,
+    # so ECS env vars are always available even if injection happens after import.
+    def _sim_raw_bucket(): return os.environ.get('RAW_LOGS_BUCKET', '')
+    def _sim_raw_prefix(): return os.environ.get('RAW_LOGS_PREFIX', 'raw-logs/')
+    def _sim_aws_region(): return os.environ.get('AWS_DEFAULT_REGION',
+                                  os.environ.get('AWS_REGION', 'us-east-1'))
+    def _sim_is_aws():     return bool(os.environ.get('RAW_LOGS_BUCKET', ''))
 
     @simulator_bp.route('/api/simulate-traffic', methods=['POST'])
     def simulate_traffic():
@@ -99,31 +101,35 @@ def create_simulator_blueprint(base_dir: str, log_filename: str, run_conversion_
 
         log_content = "\n".join(lines) + "\n"
 
-        if _IS_AWS_SIM:
-            # AWS mode: write to S3 with a UNIQUE key so S3 ObjectCreated fires
-            # and Lambda processes all the simulated events at once
+        if _sim_is_aws():
+            # AWS mode: write to S3 with a UNIQUE timestamped key.
+            # Each call creates a new object → new S3 ObjectCreated event → Lambda triggers.
+            raw_bucket = _sim_raw_bucket()
+            raw_prefix = _sim_raw_prefix()
+            aws_region = _sim_aws_region()
             try:
                 import boto3
                 from datetime import timezone
                 ts_key = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')
                 dt_key = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                key    = f"{_RAW_PREFIX}{dt_key}/simulate-traffic-{ts_key}.log"
-                boto3.client('s3', region_name=_AWS_REGION).put_object(
-                    Bucket=_RAW_BUCKET,
+                key    = f"{raw_prefix}{dt_key}/application-{ts_key}.log"
+                boto3.client('s3', region_name=aws_region).put_object(
+                    Bucket=raw_bucket,
                     Key=key,
                     Body=log_content.encode('utf-8'),
                     ContentType='text/plain',
                 )
-                info(f"[simulator] Uploaded {total} events to s3://{_RAW_BUCKET}/{key}")
+                info(f"[simulator] S3 upload OK → s3://{raw_bucket}/{key} ({len(log_content)} bytes, {total} events)")
                 return jsonify({
                     "success": True,
                     "events_seeded": total,
                     "mode": "aws",
                     "s3_key": key,
-                    "message": f"{total} events uploaded to S3. Lambda processing — dashboard updates in ~5 seconds.",
+                    "bucket": raw_bucket,
+                    "message": f"{total} events → S3. Lambda processing started. Dashboard updates in ~5 seconds.",
                 }), 200
             except Exception as exc:
-                info(f"[simulator] S3 upload failed: {exc} — falling back to local file")
+                info(f"[simulator] S3 upload FAILED: {exc} — falling back to local file")
 
         # Local mode (or S3 fallback): append to log file
         os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
