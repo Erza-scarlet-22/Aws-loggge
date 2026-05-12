@@ -123,7 +123,23 @@ def _resolve_date_filters(request_args):
     cutoff = _retention_cutoff()
     today  = date.today()
 
-    # ── Dropdown date param (most specific — takes priority) ─────────────────
+    # ── From/To calendar inputs (highest priority) ──────────────────────────────
+    from_param = request_args.get('from', '').strip()
+    to_param   = request_args.get('to',   '').strip()
+    if from_param or to_param:
+        try:
+            df = date.fromisoformat(from_param) if from_param else None
+            dt = date.fromisoformat(to_param)   if to_param   else today
+            if df and cutoff != date.min: df = max(df, cutoff)
+            if df is None and cutoff != date.min: df = cutoff
+            dt = min(dt, today)
+            fl = df.strftime('%d %b %Y') if df else '...'
+            tl = dt.strftime('%d %b %Y')
+            return df, dt, f'{fl} → {tl}'
+        except ValueError:
+            pass
+
+    # ── Dropdown date param (second priority) ─────────────────────────────────
     date_param = request_args.get('date', '').strip()
     if date_param:
         try:
