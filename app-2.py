@@ -12,7 +12,6 @@
 from flask import Flask, jsonify, request
 from logger import info, error, warn
 import os, sys, time, threading
-from dotenv import load_dotenv
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +20,29 @@ CONVERSION_DIR = os.path.abspath(os.path.join(BASE_DIR, '..', 'Conversion'))
 DASHBOARD_DIR  = os.path.abspath(os.path.join(BASE_DIR, '..', 'Dashboard'))
 DUMMY_APP_DIR  = os.path.abspath(os.path.join(BASE_DIR, '..', 'DummyApp'))
 
-load_dotenv(os.path.abspath(os.path.join(BASE_DIR, '..', '.env')), override=True)
+# ── Load .env for local development (including local-AWS mode) ──────────────
+# Looks for .env in the project root (one level above Application/)
+# In ECS: env vars come from task definition, .env is ignored.
+# Locally: .env sets AWS credentials + bucket names so you can point
+#          your local Flask app at the real AWS S3 buckets.
+_env_file = os.path.join(PROJECT_ROOT, '.env')
+if os.path.exists(_env_file):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_file, override=False)  # don't override vars already set by ECS
+        print(f"[app] Loaded .env from {_env_file}")
+    except ImportError:
+        # dotenv not installed — parse manually for basic KEY=VALUE pairs
+        with open(_env_file) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith('#') and '=' in _line:
+                    _k, _, _v = _line.partition('=')
+                    _k = _k.strip()
+                    _v = _v.strip().strip("'").strip('"')
+                    if _k and _k not in os.environ:  # don't override ECS vars
+                        os.environ[_k] = _v
+        print(f"[app] Loaded .env (manual parse) from {_env_file}")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 APP_PORT         = int(os.getenv('APP_PORT',    '5000'))
@@ -40,23 +61,48 @@ for _d in (PROJECT_ROOT, CONVERSION_DIR, DASHBOARD_DIR, DUMMY_APP_DIR):
         sys.path.append(_d)
 
 # ── S3 uploader ───────────────────────────────────────────────────────────────
-def _s3_log_key():
-    from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    return f"{RAW_LOGS_PREFIX}{today}/{APP_LOG_FILENAME}"
+# Track how many bytes we have already uploaded to S3 so each flush
+# only sends NEW lines written since the last flush.
+_s3_flush_offset = 0
+_s3_flush_lock   = threading.Lock()
 
 def _flush_log_to_s3():
+    """
+    Upload only NEW lines (since last flush) to S3 as a uniquely-named object.
+    Each flush creates a new S3 object → new ObjectCreated event → Lambda runs.
+    Using unique keys (timestamped) means Lambda processes a small delta each time
+    instead of re-processing the entire growing application.log.
+    """
+    global _s3_flush_offset
     if not IS_AWS:
         return
+    log_path = os.path.join(BASE_DIR, 'logs', APP_LOG_FILENAME)
     try:
-        import boto3
-        log_path = os.path.join(BASE_DIR, 'logs', APP_LOG_FILENAME)
         if not os.path.exists(log_path):
             return
-        s3 = boto3.client('s3', region_name=AWS_REGION)
-        with open(log_path, 'rb') as fh:
-            s3.put_object(Bucket=RAW_LOGS_BUCKET, Key=_s3_log_key(),
-                          Body=fh.read(), ContentType='text/plain')
+        with _s3_flush_lock:
+            with open(log_path, 'rb') as fh:
+                fh.seek(_s3_flush_offset)
+                new_bytes = fh.read()
+            if not new_bytes.strip():
+                return  # nothing new to upload
+            # Build a unique key so every upload fires a fresh S3 ObjectCreated
+            from datetime import datetime, timezone as _tz
+            now   = datetime.now(_tz.utc)
+            dt    = now.strftime('%Y-%m-%d')
+            ts    = now.strftime('%Y%m%d%H%M%S%f')
+            key   = f"{RAW_LOGS_PREFIX}{dt}/application-{ts}.log"
+            import boto3
+            region = os.environ.get('AWS_DEFAULT_REGION',
+                       os.environ.get('AWS_REGION', 'us-east-1'))
+            boto3.client('s3', region_name=region).put_object(
+                Bucket=RAW_LOGS_BUCKET,
+                Key=key,
+                Body=new_bytes,
+                ContentType='text/plain',
+            )
+            _s3_flush_offset += len(new_bytes)
+            print(f"[app] S3 flush OK → s3://{RAW_LOGS_BUCKET}/{key} ({len(new_bytes)} bytes)")
     except Exception as exc:
         print(f"[app] S3 flush error: {exc}")
 
@@ -110,6 +156,15 @@ def run_conversion_outputs():
             jp = os.path.join(CONVERSION_DIR, 'unique_errors.json')
             if not os.path.exists(lp):
                 return
+            # Story 4970/4968: purge log lines older than LOG_RETENTION_DAYS
+            # before converting so the CSV and JSON only contain retained data
+            try:
+                from log_to_csv_service import purge_log_file  # type: ignore
+                removed = purge_log_file(lp)
+                if removed:
+                    print(f"[app] Purged {removed} log lines beyond retention window")
+            except Exception as _pe:
+                print(f"[app] Purge skipped: {_pe}")
             rows = convert_log_to_rows(lp)
             write_rows_to_csv(rows, cp)
             write_unique_errors_json(rows, jp)
@@ -199,12 +254,29 @@ def ingest_logs():
 def _before():
     request._start_time = time.time()
 
+# Paths that should NEVER be logged — they would flood the CSV with 200 Success rows
+_NO_LOG_PATHS = {
+    '/api/status', '/health', '/favicon.ico',
+    '/api/dashboard-data', '/dashboard', '/api/retention-info',
+    '/api/chat-insights', '/api/snow/tickets',
+}
+_NO_LOG_PREFIXES = ('/static/', '/dashboard')
+
 @app.after_request
 def _after(response):
     dur = time.time() - getattr(request, '_start_time', time.time())
-    if request.path not in ('/api/status', '/health', '/favicon.ico'):
-        info(f"{request.method} {request.path} {response.status_code} ({dur*1000:.0f}ms)")
-    if IS_AWS and request.method in ('POST','PUT','DELETE','PATCH'):
+    path = request.path
+
+    # Only log actual application API calls — not dashboard polling or health checks
+    should_log = (
+        path not in _NO_LOG_PATHS
+        and not any(path.startswith(p) for p in _NO_LOG_PREFIXES)
+    )
+    if should_log:
+        info(f"{request.method} {path} {response.status_code} ({dur*1000:.0f}ms)")
+
+    # Only flush to S3 for mutating requests on non-infrastructure paths
+    if IS_AWS and request.method in ('POST', 'PUT', 'DELETE', 'PATCH') and should_log:
         _bg_flush()
     return response
 
@@ -225,5 +297,65 @@ def _status():
                     'processed_bucket': PROCESSED_BUCKET or None}), 200
 
 if __name__ == '__main__':
-    print(f"[app] mode={'AWS' if IS_AWS else 'LOCAL'}  port={APP_PORT}")
+    mode = 'AWS' if IS_AWS else 'LOCAL'
+    print(f"[app] Starting Log Aggregator  mode={mode}  port={APP_PORT}")
+    print(f"[app] Dashboard  : {'enabled' if DASHBOARD_AVAILABLE else 'disabled'}")
+    print(f"[app] DummyApp   : {'enabled' if DUMMY_APP_AVAILABLE else 'disabled'}")
+    if IS_AWS:
+        print(f"[app] Raw bucket       : {RAW_LOGS_BUCKET}")
+        print(f"[app] Processed bucket : {PROCESSED_BUCKET}")
+    print("[app] Routes registered:")
+    print("  Core API:")
+    print("    GET  /")
+    print("    GET  /api/status   (health check)")
+    print("    GET  /health       (ALB health check)")
+    print("    POST /api/logs     (write a log entry)")
+    print("    GET  /api/logs     (retrieve log lines)")
+    print("  Ingest:")
+    print("    POST /api/ingest   (curl log lines → S3 in AWS, local file otherwise)")
+    print("  Simulator:")
+    print("    POST /api/simulate-traffic  (seed 30 days of demo errors)")
+    print("    POST /api/validate          (payload validation with error logging)")
+    print("  Payments:")
+    print("    POST /api/payments/charge")
+    print("    POST /api/payments/refund")
+    print("  Auth:")
+    print("    POST /api/auth/token")
+    print("    POST /api/auth/refresh")
+    print("    POST /api/auth/login")
+    print("  Orders:")
+    print("    POST   /api/orders")
+    print("    GET    /api/orders/<order_id>")
+    print("    DELETE /api/orders/<order_id>")
+    print("  Users:")
+    print("    POST /api/users/register")
+    print("    PUT  /api/users/profile")
+    print("  Infrastructure:")
+    print("    POST /api/notifications/email")
+    print("    GET  /api/recommendations")
+    print("    POST /api/inventory/sync")
+    print("    POST /api/fulfillment/dispatch")
+    if DASHBOARD_AVAILABLE:
+        print("  Dashboard:")
+        print("    GET  /dashboard")
+        print("    GET  /api/dashboard-data")
+        print("    POST /api/snow/create")
+        print("    GET  /api/snow/status/<sys_id>")
+        print("    POST /api/snow/fix")
+        print("    POST /api/snow/update")
+        print("    GET  /api/snow/tickets")
+        print("    POST /api/fix-error")
+        print("    GET  /api/chat")
+    if DUMMY_APP_AVAILABLE:
+        print("  Dummy App:")
+        print("    GET  /dummy-app")
+        print("    POST /api/dummy-app/trigger-error")
+        print("    POST /api/dummy-app/trigger-resolution")
+        print("    POST /api/dummy-app/generate")
+        print("    POST /api/dummy-app/ship")
+        print("    GET  /api/dummy-app/logs")
+        print("    GET  /api/dummy-app/stats")
+        print("    GET  /api/dummy-app/scenario-states")
+        print("    POST /api/dummy-app/mark-fixed")
+        print("    GET  /api/dummy-app/debug")
     app.run(host=APP_HOST, port=APP_PORT, debug=FLASK_DEBUG)
