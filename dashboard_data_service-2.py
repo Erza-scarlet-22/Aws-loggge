@@ -99,38 +99,52 @@ def _read_unique_errors_data(conversion_dir: str) -> List[dict]:
 
 def _resolve_date_filters(request_args):
     """
-    New dropdown model:
-      - 'date' param  : show logs from retention cutoff UP TO this specific date
-      - No 'date' param: show all logs within the retention window (full period)
+    Supports three filter modes, sent by the dashboard:
+      preset=today   → today only
+      preset=week    → last 7 days
+      preset=month   → last 30 days
+      preset=all     → full retention window (no extra date cap)
+      date=YYYY-MM-DD→ retention cutoff up to this specific date (dropdown)
+      (nothing)      → full retention window
 
     Returns (date_from, date_to, label).
-    date_from is ALWAYS the retention cutoff.
-    date_to   is the date the customer selected from the dropdown.
+    date_from is always capped at the retention cutoff so data beyond
+    the retention window is never returned.
     """
-    cutoff     = _retention_cutoff()
-    today      = date.today()
+    cutoff = _retention_cutoff()
+    today  = date.today()
+
+    # ── Dropdown date param (most specific — takes priority) ─────────────────
     date_param = request_args.get('date', '').strip()
+    if date_param:
+        try:
+            selected = date.fromisoformat(date_param)
+            selected = min(selected, today)
+            if cutoff != date.min:
+                selected = max(selected, cutoff)
+            return (cutoff if cutoff != date.min else None), selected,                    f'Up to {selected.strftime("%d %b %Y")}'
+        except ValueError:
+            pass
 
-    if not date_param:
-        # No filter selected — show full retention window
-        if cutoff != date.min:
-            return cutoff, today, f'Last {_RETENTION_DAYS} Days (Full Window)'
-        return None, None, 'All Time'
+    # ── Preset buttons ────────────────────────────────────────────────────────
+    preset = request_args.get('preset', '').strip()
 
-    try:
-        selected_date = date.fromisoformat(date_param)
-    except ValueError:
-        return cutoff, today, f'Last {_RETENTION_DAYS} Days (Full Window)'
+    if preset == 'today':
+        df = max(today, cutoff) if cutoff != date.min else today
+        return df, today, 'Today'
 
-    # Clamp: don't go before the retention cutoff
+    if preset == 'week':
+        df = max(today - timedelta(days=6), cutoff) if cutoff != date.min              else today - timedelta(days=6)
+        return df, today, 'Last 7 Days'
+
+    if preset == 'month':
+        df = max(today - timedelta(days=29), cutoff) if cutoff != date.min              else today - timedelta(days=29)
+        return df, today, 'Last 30 Days'
+
+    # ── Default / All Time / no filter ────────────────────────────────────────
     if cutoff != date.min:
-        selected_date = max(selected_date, cutoff)
-
-    # Don't go into the future
-    selected_date = min(selected_date, today)
-
-    label = f'Up to {selected_date.strftime("%d %b %Y")}'
-    return cutoff, selected_date, label
+        return cutoff, today, f'Last {_RETENTION_DAYS} Days'
+    return None, None, 'All Time'
 
 
 # ── Row helpers ───────────────────────────────────────────────────────────────
