@@ -1652,8 +1652,10 @@ Resources:
   # ============================================================
   CodeBuildLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: !Sub "/codebuild/log-aggregator-${EnvironmentName}"
+      LogGroupName: !Sub "/codebuild/log-aggregator-build-${EnvironmentName}"
       RetentionInDays: 30
 
   # ============================================================
@@ -1817,7 +1819,7 @@ Resources:
       LogsConfig:
         CloudWatchLogs:
           Status: ENABLED
-          GroupName: !Sub "/codebuild/log-aggregator-${EnvironmentName}"
+          GroupName: !Sub "/codebuild/log-aggregator-build-${EnvironmentName}"
           StreamName: build
 
   # ============================================================
