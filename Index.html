@@ -2312,6 +2312,15 @@
 
     function renderRows(statusLabels, apiLabels) {
       const tbody = document.getElementById('rows');
+      if (!tbody) return;
+      if (!currentRows || currentRows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted);">' +
+          (allRows.length === 0
+            ? '&#x1F4ED; No error data yet. Run /api/simulate-traffic to seed logs.'
+            : '&#x1F50D; No errors match the current filter.') +
+          '</td></tr>';
+        return;
+      }
       tbody.innerHTML = '';
 
       getPagedRows().forEach(row => {
@@ -2428,11 +2437,26 @@
     let dashboardData = null;
 
     async function loadDashboard() {
-      const res = await fetch(buildApiUrl());
-      if (!res.ok) {
-        throw new Error('Unable to load dashboard data.');
+      let data;
+      try {
+        const url = buildApiUrl();
+        console.log('[dashboard] Fetching:', url);
+        const res = await fetch(url);
+        if (!res.ok) {
+          const text = await res.text();
+          console.error('[dashboard] HTTP error:', res.status, text);
+          document.getElementById('m-unique').textContent = 'ERR';
+          throw new Error('HTTP ' + res.status);
+        }
+        data = await res.json();
+        console.log('[dashboard] Data received:', JSON.stringify(data.summary),
+                    'rows:', data.rows ? data.rows.length : 0,
+                    'source:', data.summary && data.summary.source);
+      } catch(err) {
+        console.error('[dashboard] loadDashboard failed:', err);
+        document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        return;
       }
-      const data = await res.json();
       dashboardData = data;   // cache for modal use
 
       document.getElementById('m-unique').textContent = data.summary.uniqueErrorTypes;
@@ -2613,7 +2637,7 @@
       });
       applyApiChartResponsiveOptions();
 
-      allRows = [...data.rows].sort((a, b) => b.Count - a.Count);
+      allRows = [...data.rows].sort((a, b) => Number(b.Count || 0) - Number(a.Count || 0));
       populateStatusFilter(allRows);
       applySortAndSearch();
     }
@@ -2780,14 +2804,11 @@
     });
 
     // ── Date dropdown (Stories 4968/4970) ──────────────────────────────────
-    // Builds dropdown options from the server's retention window.
-    // Options: "Full period (N days)", then one entry per week/month
-    // going back to the retention cutoff.
+    // ── Date dropdown builder ────────────────────────────────────────────────
     function buildDateDropdown(retentionDays, cutoffDate, today) {
       const sel = document.getElementById('dateRangeSelect');
       if (!sel) return;
 
-      // Guard: if no cutoff date provided, calculate from retention days
       if (!cutoffDate || cutoffDate === 'null') {
         const d = new Date();
         d.setDate(d.getDate() - retentionDays);
@@ -2797,42 +2818,31 @@
         today = new Date().toISOString().slice(0, 10);
       }
 
-      const todayDt   = new Date(today      + 'T00:00:00');
-      const cutoffDt  = new Date(cutoffDate + 'T00:00:00');
+      const todayDt  = new Date(today      + 'T00:00:00');
+      const cutoffDt = new Date(cutoffDate + 'T00:00:00');
+      const todayStr = today;
+      const last7Dt  = new Date(todayDt); last7Dt.setDate(last7Dt.getDate() - 7);
+      const last7Str = last7Dt.toISOString().slice(0, 10);
 
-      // Compute fixed date strings
-      const todayStr  = today;
-      const last7Dt   = new Date(todayDt); last7Dt.setDate(last7Dt.getDate() - 7);
-      const last7Str  = last7Dt.toISOString().slice(0, 10);
-
-      // Clear and rebuild
       sel.innerHTML = '';
 
-      // ── Fixed entries (always present regardless of retention) ──────────────
-
-      // 1. All Time — shows full retention window (no date cap)
-      const allOpt        = document.createElement('option');
-      allOpt.value        = '';
-      allOpt.textContent  = 'All Time';
+      // Fixed entries
+      const allOpt = document.createElement('option');
+      allOpt.value = ''; allOpt.textContent = 'All Time';
       sel.appendChild(allOpt);
 
-      // 2. Today
-      const todayOpt      = document.createElement('option');
-      todayOpt.value      = todayStr;
-      todayOpt.textContent = `Today — ${_fmtDateLabel(todayDt)}`;
+      const todayOpt = document.createElement('option');
+      todayOpt.value = todayStr;
+      todayOpt.textContent = 'Today — ' + _fmtDateLabel(todayDt);
       sel.appendChild(todayOpt);
 
-      // 3. Last 7 Days (only shown if 7 days is within the retention window)
       if (last7Dt >= cutoffDt) {
-        const last7Opt        = document.createElement('option');
-        last7Opt.value        = last7Str;
-        last7Opt.textContent  = `Last 7 Days — up to ${_fmtDateLabel(last7Dt)}`;
+        const last7Opt = document.createElement('option');
+        last7Opt.value = last7Str;
+        last7Opt.textContent = 'Last 7 Days — up to ' + _fmtDateLabel(last7Dt);
         sel.appendChild(last7Opt);
       }
 
-      // ── Customer retention-based options ────────────────────────────────────
-      // Monthly steps going back through the retention window.
-      // Starts after 7 days so it doesn't duplicate the fixed entry above.
 
       const options = [];
       let cursor = new Date(todayDt);
@@ -3401,8 +3411,7 @@
         var data=await resp.json();
         if (!resp.ok){addChatMessage('assistant','Ticket creation failed: '+(data.error||''));return;}
         _snowTickets[_snowKey(selectedError)]=data.ticket;
-        addChatMessage('assistant','Ticket '+data.ticket.number+' created in ServiceNow.
-State: '+(data.ticket.state_label||'Open'));
+        addChatMessage('assistant','Ticket '+data.ticket.number+' created in ServiceNow. State: '+(data.ticket.state_label||'Open'));
         showSnowToast('Ticket '+data.ticket.number+' created','ok');
         refreshChatTicketBar();
       } catch(e){addChatMessage('assistant','Error: '+e.message);}
@@ -3429,8 +3438,7 @@ State: '+(data.ticket.state_label||'Open'));
         progressEl.scrollTop = progressEl.scrollHeight;
       }
 
-      addChatMessage('assistant', 'Starting automated fix for: '+(selectedError['Description']||'')+'
-Error code: '+(selectedError['Error Code']||'')+' | HTTP '+(selectedError['Status Code']||''));
+      addChatMessage('assistant', 'Starting automated fix for: '+(selectedError['Description']||'')+' Error code: '+(selectedError['Error Code']||'')+' | HTTP '+(selectedError['Status Code']||''));
 
       // Show demo plan immediately
       showDemoPlan(selectedError);
@@ -3456,17 +3464,14 @@ Error code: '+(selectedError['Error Code']||'')+' | HTTP '+(selectedError['Statu
 
         // Show bedrock plan if real (not demo)
         if (data.bedrock_plan && data.bedrock_plan.indexOf('Demo Plan')===-1 && data.bedrock_plan.indexOf('unavailable')===-1) {
-          setTimeout(function(){ addChatMessage('assistant','Bedrock Fix Plan (Live):
-
-'+data.bedrock_plan); }, (data.steps||[]).length*300+200);
+          setTimeout(function(){ addChatMessage('assistant','Bedrock Fix Plan (Live):  '+data.bedrock_plan); }, (data.steps||[]).length*300+200);
         }
 
         var delay = ((data.steps||[]).length*300) + 400;
         setTimeout(function(){
           // Final result — always show success when remediation succeeded
           var icon = data.success ? '[OK]' : '[WARN]';
-          addChatMessage('assistant', icon+' Remediation '+(data.success?'completed successfully':'attempted')+':
-'+(data.summary||'No summary.'));
+          addChatMessage('assistant', icon+' Remediation '+(data.success?'completed successfully':'attempted')+': '+(data.summary||'No summary.'));
 
           // ServiceNow — show clean result, suppress 403 warnings
           if (data.ticket) {
@@ -3477,8 +3482,7 @@ Error code: '+(selectedError['Error Code']||'')+' | HTTP '+(selectedError['Statu
             if (t.error && t.error.indexOf('403')===-1 && t.error.indexOf('Forbidden')===-1) {
               addChatMessage('assistant','ServiceNow note: '+t.error);
             } else if (tNum) {
-              addChatMessage('assistant','ServiceNow ticket '+tNum+' updated.
-Status: '+tState);
+              addChatMessage('assistant','ServiceNow ticket '+tNum+' updated. Status: '+tState);
             }
             var key = _snowKey(selectedError);
             if (_snowTickets[key]) {
@@ -3502,44 +3506,14 @@ Status: '+tState);
     function showDemoPlan(errorRow) {
       var code = String(errorRow['Error Code']||'');
       var plans = {
-        '9010': 'SSL Certificate Expired - Bedrock Fix Plan:
-
-1. Request new cert from AWS ACM
-2. Validate domain via Route 53 DNS CNAME
-3. Attach new cert to ALB HTTPS:443 listener
-4. Store cert ARN in Secrets Manager
-5. Configure CloudWatch alarm: DaysToExpiry < 30
-6. Verify TLS handshake',
-        '9011': 'SSL Expiring Soon - Bedrock Fix Plan:
-
-Proactive rotation via ACM before expiry. DNS validation automatic. Zero-downtime ALB swap.',
-        '9012': 'Password Expired - Bedrock Fix Plan:
-
-1. Generate new 32-char password
-2. Update Secrets Manager secret
-3. Rotate in AD/LDAP
-4. Recycle ECS task
-5. Verify auth succeeds',
-        '9013': 'DB Storage Critical - Bedrock Fix Plan:
-
-1. ModifyDBInstance: 1TB to 2TB
-2. Enable RDS autoscaling (max 4TB)
-3. Verify writes succeeding',
-        '9014': 'DB Connection Exhausted - Bedrock Fix Plan:
-
-1. Kill stale connections >60s
-2. Deploy patched ECS task
-3. Upgrade RDS class
-4. Verify pool stable',
-        '9015': 'Compute Overload - Bedrock Fix Plan:
-
-1. Scale ECS desired count 2 to 6
-2. Update autoscaling: target CPU 60%
-3. Verify all APIs < 200ms'
+        '9010': 'SSL Certificate Expired - Bedrock Fix Plan:  1. Request new cert from AWS ACM 2. Validate domain via Route 53 DNS CNAME 3. Attach new cert to ALB HTTPS:443 listener 4. Store cert ARN in Secrets Manager 5. Configure CloudWatch alarm: DaysToExpiry < 30 6. Verify TLS handshake',
+        '9011': 'SSL Expiring Soon - Bedrock Fix Plan:  Proactive rotation via ACM before expiry. DNS validation automatic. Zero-downtime ALB swap.',
+        '9012': 'Password Expired - Bedrock Fix Plan:  1. Generate new 32-char password 2. Update Secrets Manager secret 3. Rotate in AD/LDAP 4. Recycle ECS task 5. Verify auth succeeds',
+        '9013': 'DB Storage Critical - Bedrock Fix Plan:  1. ModifyDBInstance: 1TB to 2TB 2. Enable RDS autoscaling (max 4TB) 3. Verify writes succeeding',
+        '9014': 'DB Connection Exhausted - Bedrock Fix Plan:  1. Kill stale connections >60s 2. Deploy patched ECS task 3. Upgrade RDS class 4. Verify pool stable',
+        '9015': 'Compute Overload - Bedrock Fix Plan:  1. Scale ECS desired count 2 to 6 2. Update autoscaling: target CPU 60% 3. Verify all APIs < 200ms'
       };
-      var plan = plans[code] || ('Bedrock Fix Plan for error code '+code+':
-
-Automated remediation triggered. Identifying root cause, executing fix, verifying resolution, updating ServiceNow ticket.');
+      var plan = plans[code] || ('Bedrock Fix Plan for error code '+code+':  Automated remediation triggered. Identifying root cause, executing fix, verifying resolution, updating ServiceNow ticket.');
       addChatMessage('assistant', plan);
     }
 
