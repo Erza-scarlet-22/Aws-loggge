@@ -1,0 +1,8 @@
+# ── S3 Buckets (from CloudFormation Outputs) ─────────────────────────────────
+# Get these from: AWS Console → CloudFormation → toil-code → Outputs
+RAW_LOGS_BUCKET=log-aggregator-raw-log-723651357729-dev
+RAW_LOGS_PREFIX=raw-logs/
+
+PROCESSED_BUCKET=log-aggregator-processeds-723651357729-dev
+PROCESSED_LOG_PREFIX=processed/
+PROCESSED_PREFIX=processed/
