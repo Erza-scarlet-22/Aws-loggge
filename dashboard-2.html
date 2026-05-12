@@ -1,0 +1,3650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Log Aggregation Intelligence Dashboard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+
+    :root {
+      --bg: #f8f5f2;
+      --panel: #ffffff;
+      --ink: #1a1a1a;
+      --muted: #5b544d;
+      --line: #e6ddd6;
+      --accent: #ff7a1a;
+      --accent-2: #121212;
+      --accent-3: #ff9f43;
+      --danger: #c03a3a;
+      --warning: #b85a00;
+      --success: #2f7a3f;
+      --hero-from: #0f0f0f;
+      --hero-mid: #2a2520;
+      --hero-to: #ff7a1a;
+      --hero-hot: #ffb168;
+      --card-shadow: 0 2px 12px rgba(15,43,70,0.08), 0 1px 3px rgba(15,43,70,0.05);
+      --card-shadow-hover: 0 8px 28px rgba(15,43,70,0.14), 0 2px 6px rgba(15,43,70,0.08);
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 5% -8%, #fff0df 0%, transparent 48%),
+        radial-gradient(900px 600px at 100% 0%,  #ffe4c8 0%, transparent 50%),
+        radial-gradient(700px 400px at 60% 100%, #f3ebe4 0%, transparent 55%),
+        var(--bg);
+      min-height: 100vh;
+    }
+
+    .container {
+      width: min(1160px, 92vw);
+      margin: 32px auto 48px;
+      animation: fade-in 420ms cubic-bezier(.22,.68,0,1.1);
+    }
+
+    .hero {
+      background: linear-gradient(130deg, var(--hero-from) 0%, var(--hero-mid) 55%, var(--hero-to) 100%);
+      color: #fff;
+      border-radius: 22px;
+      padding: 28px 30px;
+      box-shadow: 0 16px 40px rgba(5,0,74,0.32);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 80% -10%, rgba(255,255,255,0.15) 0%, transparent 55%),
+        radial-gradient(circle at 8% 108%, rgba(255,255,255,0.11) 0%, transparent 48%),
+        linear-gradient(105deg, transparent 72%, rgba(255,94,79,0.30) 100%);
+      pointer-events: none;
+    }
+
+    .hero-bar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      position: relative;
+    }
+
+    .hero-icon {
+      width: 54px;
+      height: 54px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      margin-bottom: 6px;
+      background: rgba(255,255,255,0.16);
+      border: 1px solid rgba(255,255,255,0.38);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 14px rgba(0,0,0,0.16);
+      backdrop-filter: blur(4px);
+    }
+
+    .hero-icon svg {
+      width: 28px;
+      height: 28px;
+      stroke: #fff;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      min-width: 175px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: clamp(1.35rem, 2.3vw, 2.1rem);
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+
+    .hero p {
+      margin: 6px 0 0;
+      color: rgba(255,255,255,0.92);
+      font-size: 0.96rem;
+    }
+
+    .hero-badges {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+
+    .hero-badge {
+      background: rgba(255,255,255,0.17);
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 3px 11px;
+      color: rgba(255,255,255,0.95);
+      letter-spacing: 0.3px;
+    }
+
+    .metrics {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      padding: 18px 18px 16px;
+      box-shadow: var(--card-shadow);
+      transition: box-shadow 200ms, transform 200ms;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric:hover {
+      box-shadow: var(--card-shadow-hover);
+      transform: translateY(-2px);
+    }
+
+    .metric::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .metric:nth-child(1)::after { background: linear-gradient(90deg, #121212, #ff7a1a); }
+    .metric:nth-child(2)::after { background: linear-gradient(90deg, #c03a3a, #dd6464); }
+    .metric:nth-child(3)::after { background: linear-gradient(90deg, #8a4700, #b85a00); }
+    .metric:nth-child(4)::after { background: linear-gradient(90deg, #2a2520, #ff9f43); }
+
+    .metric-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .icon-badge {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      border: 1px solid #e5cbb1;
+      background: linear-gradient(160deg, #fff1e3 0%, #ffe2c3 100%);
+      color: #121212;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+      flex-shrink: 0;
+    }
+
+    .icon-badge svg {
+      width: 17px;
+      height: 17px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .metric-icon {
+      opacity: 0.92;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 600;
+    }
+
+    .metric .value {
+      margin-top: 10px;
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--ink);
+      line-height: 1;
+      letter-spacing: -0.5px;
+    }
+
+    .grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      box-shadow: var(--card-shadow);
+      overflow: hidden;
+      transition: box-shadow 200ms;
+    }
+
+    .card:hover {
+      box-shadow: var(--card-shadow-hover);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 18px 0;
+    }
+
+    .card-header-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+    }
+
+    .card h2 {
+      margin: 0;
+      font-size: 0.97rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.1px;
+    }
+
+    .canvas-wrap {
+      padding: 12px 16px 16px;
+      height: 300px;
+    }
+
+    .table-wrap {
+      margin-top: 14px;
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      overflow: auto;
+      box-shadow: var(--card-shadow);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 740px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.91rem;
+    }
+
+    th {
+      background: linear-gradient(180deg, #f7eee5 0%, #f0e2d6 100%);
+      color: #3a3028;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.55px;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    td.count {
+      font-weight: 800;
+      color: var(--accent-2);
+    }
+
+    tbody tr {
+      cursor: pointer;
+      transition: background 100ms;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #f9f3ec;
+    }
+
+    tbody tr:hover {
+      background: #f6e4d2;
+    }
+
+    tbody tr.row-selected {
+      background: #f0d5bd;
+      box-shadow: inset 3px 0 0 var(--accent-2);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 0.4px;
+    }
+
+    .s4 { background: linear-gradient(135deg, #8a4700, #b85a00); }
+    .s5 { background: linear-gradient(135deg, #c03a3a, #d85d5d); }
+
+    .toolbar {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .toolbar-left {
+      margin-right: auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #121212, #ff7a1a);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.86rem;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: filter 140ms, transform 120ms;
+    }
+
+    button:hover {
+      filter: brightness(0.93);
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.68;
+      filter: none;
+      transform: none;
+    }
+
+    .secondary-btn {
+      background: rgba(255,255,255,0.20);
+      border: 1px solid rgba(255,255,255,0.42);
+      backdrop-filter: blur(8px);
+      font-size: 0.84rem;
+    }
+
+    .download-status {
+      min-height: 1em;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .toolbar-note {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .countdown-ring {
+      width: 16px;
+      height: 16px;
+      transform: rotate(-90deg);
+    }
+
+    .countdown-ring circle {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2.4;
+      stroke-dasharray: 44;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s linear;
+    }
+
+    .pagination-bar {
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .pagination-meta,
+    .pagination-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .pagination-meta label {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .pagination-select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.84rem;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    .page-btn {
+      background: var(--bg);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-weight: 700;
+      padding: 7px 14px;
+    }
+
+    .page-btn:not(:disabled):hover {
+      background: #f3e4d7;
+      border-color: #e0c3a8;
+    }
+
+    .page-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.4;
+      transform: none;
+    }
+
+    .page-indicator,
+    .pagination-summary {
+      color: var(--muted);
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+
+    /* ── Date filter strip ── */
+    .filter-strip {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .filter-strip label {
+      font-size: .78rem;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .date-range-select {
+      appearance: none;
+      -webkit-appearance: none;
+      border: 1.5px solid var(--line);
+      border-radius: 9px;
+      padding: 7px 36px 7px 14px;
+      font-size: .82rem;
+      font-family: inherit;
+      font-weight: 600;
+      color: var(--text);
+      background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+      cursor: pointer;
+      min-width: 240px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .date-range-select:hover { border-color: var(--accent); }
+    .date-range-select:focus { outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255,122,26,.15); }
+    .preset-btn {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 5px 13px;
+      font-size: .78rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--muted);
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    .preset-btn:hover, .preset-btn.active {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+
+    :root {
+      --bg: #f8f5f2;
+      --panel: #ffffff;
+      --ink: #1a1a1a;
+      --muted: #5b544d;
+      --line: #e6ddd6;
+      --accent: #ff7a1a;
+      --accent-2: #121212;
+      --accent-3: #ff9f43;
+      --danger: #c03a3a;
+      --warning: #b85a00;
+      --success: #2f7a3f;
+      --hero-from: #0f0f0f;
+      --hero-mid: #2a2520;
+      --hero-to: #ff7a1a;
+      --hero-hot: #ffb168;
+      --card-shadow: 0 2px 12px rgba(15,43,70,0.08), 0 1px 3px rgba(15,43,70,0.05);
+      --card-shadow-hover: 0 8px 28px rgba(15,43,70,0.14), 0 2px 6px rgba(15,43,70,0.08);
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 5% -8%, #fff0df 0%, transparent 48%),
+        radial-gradient(900px 600px at 100% 0%,  #ffe4c8 0%, transparent 50%),
+        radial-gradient(700px 400px at 60% 100%, #f3ebe4 0%, transparent 55%),
+        var(--bg);
+      min-height: 100vh;
+    }
+
+    .container {
+      width: min(1160px, 92vw);
+      margin: 32px auto 48px;
+      animation: fade-in 420ms cubic-bezier(.22,.68,0,1.1);
+    }
+
+    .hero {
+      background: linear-gradient(130deg, var(--hero-from) 0%, var(--hero-mid) 55%, var(--hero-to) 100%);
+      color: #fff;
+      border-radius: 22px;
+      padding: 28px 30px;
+      box-shadow: 0 16px 40px rgba(5,0,74,0.32);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 80% -10%, rgba(255,255,255,0.15) 0%, transparent 55%),
+        radial-gradient(circle at 8% 108%, rgba(255,255,255,0.11) 0%, transparent 48%),
+        linear-gradient(105deg, transparent 72%, rgba(255,94,79,0.30) 100%);
+      pointer-events: none;
+    }
+
+    .hero-bar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      position: relative;
+    }
+
+    .hero-icon {
+      width: 54px;
+      height: 54px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      margin-bottom: 6px;
+      background: rgba(255,255,255,0.16);
+      border: 1px solid rgba(255,255,255,0.38);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 14px rgba(0,0,0,0.16);
+      backdrop-filter: blur(4px);
+    }
+
+    .hero-icon svg {
+      width: 28px;
+      height: 28px;
+      stroke: #fff;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      min-width: 175px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif;
+      font-size: clamp(1.35rem, 2.3vw, 2.1rem);
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+
+    .hero p {
+      margin: 6px 0 0;
+      color: rgba(255,255,255,0.92);
+      font-size: 0.96rem;
+    }
+
+    .hero-badges {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+
+    .hero-badge {
+      background: rgba(255,255,255,0.17);
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 3px 11px;
+      color: rgba(255,255,255,0.95);
+      letter-spacing: 0.3px;
+    }
+
+    .metrics {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      padding: 18px 18px 16px;
+      box-shadow: var(--card-shadow);
+      transition: box-shadow 200ms, transform 200ms;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric:hover {
+      box-shadow: var(--card-shadow-hover);
+      transform: translateY(-2px);
+    }
+
+    .metric::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .metric:nth-child(1)::after { background: linear-gradient(90deg, #121212, #ff7a1a); }
+    .metric:nth-child(2)::after { background: linear-gradient(90deg, #c03a3a, #dd6464); }
+    .metric:nth-child(3)::after { background: linear-gradient(90deg, #8a4700, #b85a00); }
+    .metric:nth-child(4)::after { background: linear-gradient(90deg, #2a2520, #ff9f43); }
+
+    .metric-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .icon-badge {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      border: 1px solid #e5cbb1;
+      background: linear-gradient(160deg, #fff1e3 0%, #ffe2c3 100%);
+      color: #121212;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+      flex-shrink: 0;
+    }
+
+    .icon-badge svg {
+      width: 17px;
+      height: 17px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .metric-icon {
+      opacity: 0.92;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 600;
+    }
+
+    .metric .value {
+      margin-top: 10px;
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--ink);
+      line-height: 1;
+      letter-spacing: -0.5px;
+    }
+
+    .grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      box-shadow: var(--card-shadow);
+      overflow: hidden;
+      transition: box-shadow 200ms;
+    }
+
+    .card:hover {
+      box-shadow: var(--card-shadow-hover);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 18px 0;
+    }
+
+    .card-header-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+    }
+
+    .card h2 {
+      margin: 0;
+      font-size: 0.97rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.1px;
+    }
+
+    .canvas-wrap {
+      padding: 12px 16px 16px;
+      height: 300px;
+    }
+
+    .table-wrap {
+      margin-top: 14px;
+      background: var(--panel);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      overflow: auto;
+      box-shadow: var(--card-shadow);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 740px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.91rem;
+    }
+
+    th {
+      background: linear-gradient(180deg, #f7eee5 0%, #f0e2d6 100%);
+      color: #3a3028;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.55px;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    td.count {
+      font-weight: 800;
+      color: var(--accent-2);
+    }
+
+    tbody tr {
+      cursor: pointer;
+      transition: background 100ms;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #f9f3ec;
+    }
+
+    tbody tr:hover {
+      background: #f6e4d2;
+    }
+
+    tbody tr.row-selected {
+      background: #f0d5bd;
+      box-shadow: inset 3px 0 0 var(--accent-2);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 0.4px;
+    }
+
+    .s4 { background: linear-gradient(135deg, #8a4700, #b85a00); }
+    .s5 { background: linear-gradient(135deg, #c03a3a, #d85d5d); }
+
+    .toolbar {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .toolbar-left {
+      margin-right: auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #121212, #ff7a1a);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.86rem;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: filter 140ms, transform 120ms;
+    }
+
+    button:hover {
+      filter: brightness(0.93);
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.68;
+      filter: none;
+      transform: none;
+    }
+
+    .secondary-btn {
+      background: rgba(255,255,255,0.20);
+      border: 1px solid rgba(255,255,255,0.42);
+      backdrop-filter: blur(8px);
+      font-size: 0.84rem;
+    }
+
+    .download-status {
+      min-height: 1em;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .toolbar-note {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .countdown-ring {
+      width: 16px;
+      height: 16px;
+      transform: rotate(-90deg);
+    }
+
+    .countdown-ring circle {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2.4;
+      stroke-dasharray: 44;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s linear;
+    }
+
+    .pagination-bar {
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .pagination-meta,
+    .pagination-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .pagination-meta label {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .pagination-select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.84rem;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    .page-btn {
+      background: var(--bg);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-weight: 700;
+      padding: 7px 14px;
+    }
+
+    .page-btn:not(:disabled):hover {
+      background: #f3e4d7;
+      border-color: #e0c3a8;
+    }
+
+    .page-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.4;
+      transform: none;
+    }
+
+    .page-indicator,
+    .pagination-summary {
+      color: var(--muted);
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+
+    .filter-active-badge {
+      font-size: .74rem;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: rgba(255,122,26,.12);
+      color: var(--accent);
+      display: none;
+    }
+
+
+    /* ── Status code filter bar ── */
+    .sc-filter-bar {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 11px 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .sc-filter-bar .sc-filter-label {
+      font-size: 0.79rem;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .sc-btn {
+      background: var(--bg);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5px 14px;
+      font-size: 0.83rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: filter 120ms, transform 100ms, box-shadow 120ms;
+    }
+
+    .sc-btn:hover { background: #f3e4d7; transform: translateY(-1px); }
+
+    .sc-btn.active {
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.18);
+    }
+
+    .sc-btn.sc-4xx  { background: linear-gradient(135deg,#8a4700,#b85a00); color:#fff; }
+    .sc-btn.sc-4xx:not(.active) { background: var(--bg); color: var(--ink); }
+    .sc-btn.sc-4xx.active { background: linear-gradient(135deg,#8a4700,#b85a00); }
+    .sc-btn.sc-5xx  { background: linear-gradient(135deg,#991b1b,#dc2626); color:#fff; }
+    .sc-btn.sc-5xx:not(.active) { background: var(--bg); color: var(--ink); }
+    .sc-btn.sc-5xx.active { background: linear-gradient(135deg,#991b1b,#dc2626); }
+    .sc-btn.sc-all.active { background: linear-gradient(135deg,#121212,#ff7a1a); }
+
+    /* ── Toast notifications ── */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+      z-index: 200;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: #121212;
+      color: #fff;
+      border-radius: 12px;
+      padding: 11px 20px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: auto;
+      animation: toast-in 280ms cubic-bezier(.22,.68,0,1.1) forwards;
+      max-width: 420px;
+      text-align: center;
+    }
+
+    .toast.toast-success { border-left: 4px solid #1a8c4b; }
+    .toast.toast-error   { border-left: 4px solid #be2a2a; }
+    .toast.toast-info    { border-left: 4px solid #ff7a1a; }
+
+    .toast.toast-out {
+      animation: toast-out 260ms ease-in forwards;
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(18px) scale(0.94); }
+      to   { opacity: 1; transform: translateY(0)  scale(1); }
+    }
+
+    @keyframes toast-out {
+      from { opacity: 1; transform: translateY(0);  }
+      to   { opacity: 0; transform: translateY(10px); }
+    }
+
+    /* ── Search box ── */
+    .search-wrap {
+      position: relative;
+      flex: 1 1 200px;
+      max-width: 340px;
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--muted);
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 7px 10px 7px 34px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.85rem;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 140ms, box-shadow 140ms;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 3px rgba(18,18,18,0.16);
+    }
+
+    /* ── Sortable headers ── */
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    th.sortable:hover { background: #f2e5d8; }
+
+    th .sort-icon {
+      display: inline-block;
+      margin-left: 4px;
+      opacity: 0.4;
+      font-size: 0.7rem;
+      vertical-align: middle;
+    }
+
+    th.sort-asc  .sort-icon, th.sort-desc .sort-icon { opacity: 1; }
+
+    /* ── Sparkline cell ── */
+    .spark-cell {
+      padding: 8px 12px;
+    }
+
+    .spark-cell canvas {
+      display: block;
+    }
+
+    /* Chat Ops panel */
+    .chat-panel {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      width: min(430px, calc(100vw - 24px));
+      max-height: 76vh;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 16px 32px rgba(20, 35, 70, 0.24);
+      display: none;
+      overflow: hidden;
+      z-index: 50;
+    }
+
+    .chat-panel.open {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      background: linear-gradient(125deg, #121212 0%, #2a2520 58%, #ff7a1a 100%);
+      color: #fff;
+    }
+
+    .chat-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .chat-close {
+      border: 0;
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      border-radius: 8px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .chat-body {
+      padding: 10px;
+      background: #fff8f2;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 240px;
+    }
+
+    .chat-msg {
+      max-width: 94%;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 0.86rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .chat-msg.user {
+      margin-left: auto;
+      background: #ffe7d1;
+      color: #4a2a10;
+    }
+
+    .chat-msg.assistant {
+      margin-right: auto;
+      background: #fff2e5;
+      color: #2d2520;
+    }
+
+    .chat-input-wrap {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .chat-input {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 0.86rem;
+      outline: none;
+    }
+
+    .chat-send {
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent-2);
+      color: #fff;
+      font-weight: 700;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 960px) {
+      .hero-bar { flex-direction: column; }
+      .hero-actions { align-items: stretch; min-width: 0; }
+      .metrics { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+      .canvas-wrap { height: 260px; }
+      .api-chart-card .canvas-wrap { height: 320px; }
+      .pagination-bar { align-items: stretch; }
+      .toolbar { flex-wrap: wrap; }
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse-ring {
+      0%   { opacity: 1; }
+      50%  { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+
+    /* ── Clickable metric cards ──────────────────────────── */
+    /* Stretched transparent button covers the full card area */
+    .metric-card-btn {
+      position: absolute;
+      inset: 0;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      border-radius: var(--radius);
+      z-index: 1;
+    }
+    .metric-card-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .metric--clickable {
+      cursor: default;
+    }
+    .metric--clickable:has(.metric-card-btn:hover) {
+      box-shadow: var(--card-shadow-hover);
+      transform: translateY(-2px);
+    }
+    .metric--clickable:has(.metric-card-btn:active) {
+      transform: translateY(0) scale(0.98);
+    }
+    .metric--clickable .label::after {
+      content: ' ↗';
+      font-size: 0.62rem;
+      opacity: 0.45;
+      letter-spacing: 0;
+    }
+
+    /* ── Detail modal ──────────────────────────────────────── */
+    dialog.modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      border: none;
+      padding: 0;
+      background: transparent;
+      display: none;
+      pointer-events: none;
+    }
+    dialog.modal-overlay[open] {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+    }
+    dialog.modal-overlay::backdrop {
+      background: rgba(12, 12, 12, 0.60);
+      backdrop-filter: blur(5px);
+    }
+    .modal-box {
+      background: var(--panel);
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      box-shadow: 0 24px 64px rgba(12,12,12,0.30), 0 4px 16px rgba(12,12,12,0.12);
+      width: min(780px, 94vw);
+      max-height: 82vh;
+      display: flex;
+      flex-direction: column;
+      transform: translateY(20px) scale(0.97);
+      opacity: 0;
+      transition: transform 260ms cubic-bezier(0.34,1.3,0.64,1), opacity 200ms ease;
+    }
+    dialog.modal-overlay.open .modal-box {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 22px 16px;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #1a1a1a 0%, #2a2520 100%);
+      border-radius: 20px 20px 0 0;
+    }
+    .modal-header-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(160deg, #ff9f43 0%, #ff7a1a 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(255,122,26,0.35);
+    }
+    .modal-header-icon svg {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .modal-title {
+      flex: 1;
+    }
+    .modal-title h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin: 0 0 2px;
+    }
+    .modal-title p {
+      font-size: 0.73rem;
+      color: rgba(255,255,255,0.55);
+      margin: 0;
+    }
+    .modal-close {
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 9px;
+      background: rgba(255,255,255,0.07);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255,255,255,0.65);
+      font-size: 1rem;
+      line-height: 1;
+      transition: background 140ms, color 140ms, border-color 140ms;
+      flex-shrink: 0;
+    }
+    .modal-close:hover {
+      background: #ff7a1a;
+      color: #fff;
+      border-color: #ff7a1a;
+    }
+    .modal-body {
+      overflow-y: auto;
+      padding: 18px 22px 24px;
+    }
+    .modal-search {
+      position: relative;
+      margin-bottom: 14px;
+    }
+    .modal-search input {
+      width: 100%;
+      padding: 9px 12px 9px 36px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.825rem;
+      background: var(--bg);
+      color: var(--ink);
+      outline: none;
+      transition: border-color 160ms, box-shadow 160ms;
+    }
+    .modal-search input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255,122,26,0.14);
+    }
+    .modal-search svg {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 15px;
+      height: 15px;
+      stroke: var(--muted);
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+    .modal-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .modal-table thead th {
+      padding: 9px 12px;
+      text-align: left;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--accent-2);
+      border-bottom: 2px solid var(--accent);
+    }
+    .modal-table thead th:first-child { border-radius: 10px 0 0 0; }
+    .modal-table thead th:last-child  { border-radius: 0 10px 0 0; }
+    .modal-table tbody tr {
+      border-bottom: 1px solid var(--line);
+      transition: background 110ms;
+    }
+    .modal-table tbody tr:last-child { border-bottom: none; }
+    .modal-table tbody tr:nth-child(even) { background: rgba(0,0,0,0.018); }
+    .modal-table tbody tr:hover { background: #fff4ec; }
+    .modal-table tbody td {
+      padding: 9px 12px;
+      vertical-align: middle;
+      color: var(--ink);
+    }
+    .modal-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 11px;
+      border-radius: 20px;
+      font-size: 0.73rem;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .modal-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 80px;
+    }
+    .modal-bar {
+      height: 6px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      min-width: 4px;
+    }
+    .modal-bar-val {
+      font-weight: 700;
+      color: var(--ink);
+      white-space: nowrap;
+      font-size: 0.82rem;
+    }
+    .modal-empty {
+      text-align: center;
+      padding: 44px 0;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+    .modal-empty::before {
+      content: '⚠';
+      display: block;
+      font-size: 1.6rem;
+      margin-bottom: 8px;
+      opacity: 0.4;
+    }
+
+    /* ── Retention banner (Story 4968/4970) ────────────────────────────────── */
+    .retention-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(90deg, #fff8f0, #fff3e6);
+      border: 1px solid #f0d5b0;
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      padding: 9px 16px;
+      margin-bottom: 12px;
+      font-size: .82rem;
+      color: #5b3a00;
+      flex-wrap: wrap;
+    }
+    .retention-banner svg { flex-shrink: 0; }
+    .retention-banner strong { color: #c85000; }
+    .retention-banner .ret-cutoff {
+      font-family: monospace;
+      background: rgba(200,80,0,.1);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: .78rem;
+    }
+    .retention-banner .ret-change {
+      margin-left: auto;
+      font-size: .74rem;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .date-blocked {
+      opacity: .45;
+      pointer-events: none;
+      position: relative;
+    }
+    .preset-btn[data-preset="quarter"].retention-label::after {
+      content: attr(data-days);
+    }
+
+    /* ── Source filter bar ──────────────────────────────────────────────────── */
+    .source-filter-bar{display:flex;align-items:center;gap:10px;margin:0 0 6px;flex-wrap:wrap;}
+    .source-filter-label{font-size:.78rem;color:var(--muted);font-weight:600;}
+    .src-btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:4px 13px;font-size:.78rem;font-weight:600;cursor:pointer;color:var(--muted);transition:background .15s,color .15s,border-color .15s;}
+    .src-btn.active,.src-btn:hover{background:var(--accent);color:#fff;border-color:var(--accent);}
+    /* ── Table Actions column ───────────────────────────────────────────────── */
+    .snow-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap;}
+    .btn-snow{font-size:.71rem;font-weight:700;border:none;border-radius:6px;padding:4px 9px;cursor:pointer;white-space:nowrap;transition:opacity .15s,transform .1s;}
+    .btn-snow:hover:not(:disabled){opacity:.85;transform:translateY(-1px);}
+    .btn-snow:disabled{opacity:.45;cursor:default;}
+    .btn-create-ticket{background:#0085c8;color:#fff;}
+    .btn-fix-error{background:#2f7a3f;color:#fff;}
+    .btn-snow-status{background:#eee;color:#333;}
+    .snow-ticket-badge{display:inline-block;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:20px;white-space:nowrap;}
+    .snow-ticket-badge.open{background:rgba(0,133,200,.12);color:#0085c8;}
+    .snow-ticket-badge.resolved{background:rgba(47,122,63,.15);color:#2f7a3f;}
+    .snow-tick-spin{display:inline-block;width:11px;height:11px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:snow-spin .6s linear infinite;vertical-align:middle;}
+    @keyframes snow-spin{to{transform:rotate(360deg);}}
+    /* ── Chat panel (bigger) ────────────────────────────────────────────────── */
+    .chat-ticket-bar{border-top:1px solid var(--line);padding:10px 12px;background:#fff8f2;display:none;flex-direction:column;gap:8px;}
+    .chat-ticket-bar.visible{display:flex;}
+    .chat-tb-title{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+    .chat-tb-status{font-size:.75rem;color:var(--muted);}
+    .chat-tb-actions{display:flex;gap:7px;flex-wrap:wrap;}
+    .ctb{border:none;border-radius:7px;font-family:inherit;font-weight:700;font-size:.76rem;padding:6px 13px;cursor:pointer;transition:opacity .15s,transform .1s;}
+    .ctb:hover:not(:disabled){opacity:.85;transform:translateY(-1px);}
+    .ctb:disabled{opacity:.45;cursor:default;}
+    .ctb-create {background:#0085c8;color:#fff;}
+    .ctb-fix    {background:#2f7a3f;color:#fff;}
+    .ctb-autofix{background:#2f7a3f;color:#fff;}
+    .ctb-close  {background:#1a1a2e;color:#fff;}
+    .ctb-hold   {background:#b85a00;color:#fff;}
+    .ctb-update {background:#7c3aed;color:#fff;}
+    .ctb-status {background:#eee;   color:#333;}
+    .ctb-badge{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:20px;}
+    .ctb-badge.open{background:rgba(0,133,200,.12);color:#0085c8;}
+    .ctb-badge.resolved{background:rgba(47,122,63,.15);color:#2f7a3f;}
+    .ctb-badge.progress{background:rgba(124,58,237,.12);color:#7c3aed;}
+    .fix-progress{display:none;flex-direction:column;gap:4px;margin-top:6px;max-height:160px;overflow-y:auto;}
+    .fix-progress.visible{display:flex;}
+    .fix-step{display:flex;align-items:flex-start;gap:7px;font-size:.74rem;padding:4px 0;border-bottom:1px solid var(--line);}
+    .fix-step:last-child{border-bottom:none;}
+    .fix-step-icon{flex-shrink:0;margin-top:1px;}
+    .fix-step-text{line-height:1.4;}
+    .fix-step-detail{font-size:.68rem;color:var(--muted);margin-top:1px;}
+    .chat-update-form{display:none;flex-direction:column;gap:7px;margin-top:4px;}
+    .chat-update-form.visible{display:flex;}
+    .chat-update-ta{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:.82rem;font-family:inherit;resize:vertical;min-height:56px;outline:none;}
+    .chat-update-ta:focus{border-color:var(--accent);}
+    .chat-update-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;}
+    .chat-state-sel{border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:.78rem;font-family:inherit;background:#faf8f6;}
+  </style>
+</head>
+<body>
+  <main class="container">
+    <section class="hero">
+      <div class="hero-bar">
+        <div>
+          <div class="hero-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 19h16" />
+              <path d="M7 16v-4" />
+              <path d="M12 16V9" />
+              <path d="M17 16v-7" />
+              <path d="M5 7l4-3 4 3 6-4" />
+            </svg>
+          </div>
+          <h1>Log Aggregation Intelligence Dashboard</h1>
+          <p>Errors from runtime application logs, reimagined in an Outcreate-inspired command view</p>
+          <div class="hero-badges">
+            <span class="hero-badge">🔴 Live</span>
+            <span class="hero-badge">Outcreate Mode</span>
+            <span class="hero-badge">Auto-refresh 30s</span>
+          </div>
+        </div>
+        <span class="download-status" id="downloadStatus" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <!-- Retention banner (Story 4968/4970) -->
+    <div class="retention-banner" id="retentionBanner" style="display:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c85000" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+      </svg>
+      <span>
+        <strong>Data retention:</strong>
+        Showing last <strong id="retDays">90</strong> days of logs
+        &nbsp;&mdash;&nbsp;
+        Data before <span class="ret-cutoff" id="retCutoff">—</span> is automatically purged.
+      </span>
+      <span class="ret-change">Configurable via LOG_RETENTION_DAYS</span>
+    </div>
+
+    <!-- Filter strip: preset buttons + retention dropdown + custom From/To calendar -->
+    <div class="filter-strip" id="filterStrip">
+      <button class="preset-btn active" data-preset="all">All Time</button>
+      <button class="preset-btn" data-preset="today">Today</button>
+      <button class="preset-btn" data-preset="week">Last 7 Days</button>
+      <button class="preset-btn" data-preset="month">Last 30 Days</button>
+      <span class="date-sep" style="color:var(--line);font-size:1.2rem;">|</span>
+      <label for="dateRangeSelect" style="font-size:.78rem;font-weight:600;color:var(--muted);">Period:</label>
+      <select class="date-range-select" id="dateRangeSelect">
+        <option value="">-- Select a date range --</option>
+      </select>
+      <span class="date-sep" style="color:var(--line);font-size:1.2rem;">|</span>
+      <label for="dateFrom" style="font-size:.78rem;font-weight:600;color:var(--muted);">From</label>
+      <input type="date" id="dateFrom" style="border:1.5px solid var(--line);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;background:var(--panel);color:var(--text);cursor:pointer;" />
+      <label for="dateTo" style="font-size:.78rem;font-weight:600;color:var(--muted);">To</label>
+      <input type="date" id="dateTo" style="border:1.5px solid var(--line);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;background:var(--panel);color:var(--text);cursor:pointer;" />
+      <button class="preset-btn" id="applyRange" style="background:var(--accent);color:#fff;border-color:var(--accent);">Apply</button>
+      <span class="filter-active-badge" id="filterBadge"></span>
+    </div>
+
+    <section class="metrics">
+      <article class="metric metric--clickable">
+        <button class="metric-card-btn" id="card-unique" aria-label="View unique error types list"></button>
+        <div class="metric-top"><div class="label">Unique Error Types</div><div class="metric-icon icon-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3-5 3z"/></svg></div></div>
+        <div class="value" id="m-unique">0</div>
+      </article>
+      <article class="metric metric--clickable">
+        <button class="metric-card-btn" id="card-total" aria-label="View total error events list"></button>
+        <div class="metric-top"><div class="label">Total Error Events</div><div class="metric-icon icon-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg></div></div>
+        <div class="value" id="m-total">0</div>
+      </article>
+      <article class="metric metric--clickable">
+        <button class="metric-card-btn" id="card-status" aria-label="View status codes breakdown"></button>
+        <div class="metric-top"><div class="label">Status Codes</div><div class="metric-icon icon-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13 13 0 0 1 0 18"/><path d="M12 3a13 13 0 0 0 0 18"/></svg></div></div>
+        <div class="value" id="m-status">0</div>
+      </article>
+      <article class="metric metric--clickable">
+        <button class="metric-card-btn" id="card-api" aria-label="View impacted APIs list"></button>
+        <div class="metric-top"><div class="label">APIs Impacted</div><div class="metric-icon icon-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 0 6l1 1a4 4 0 0 0 6-6l-1-1"/><path d="M14 11a4 4 0 0 0 0-6l-1-1a4 4 0 0 0-6 6l1 1"/><path d="M9 15l6-6"/></svg></div></div>
+        <div class="value" id="m-api">0</div>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-header"><span class="card-header-icon icon-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16"/><rect x="6" y="11" width="3" height="5" rx="1"/><rect x="11" y="8" width="3" height="8" rx="1"/><rect x="16" y="6" width="3" height="10" rx="1"/></svg></span><h2>Error Count By Status Code</h2></div>
+        <div class="canvas-wrap"><canvas id="statusChart"></canvas></div>
+      </article>
+      <article class="card api-chart-card">
+        <div class="card-header"><span class="card-header-icon icon-badge" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 4a8 8 0 0 1 8 8"/></svg></span><h2>Top APIs By Error Volume</h2></div>
+        <div class="canvas-wrap"><canvas id="apiChart"></canvas></div>
+      </article>
+    </section>
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <span class="toolbar-note">
+          <svg class="countdown-ring" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="7" id="countdownCircle" />
+          </svg>
+          Next refresh in <span id="countdownLabel">30s</span>
+        </span>
+        <span class="muted" id="last-updated">Last updated: --</span>
+        <div class="search-wrap">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input class="search-input" id="searchInput" type="search" placeholder="Search errors, APIs…" aria-label="Search table" />
+        </div>
+      </div>
+      <button id="exportCsvBtn" type="button">↧ Export CSV</button>
+      <button id="downloadPdfBtn" type="button">⬇ Download PDF</button>
+      <button id="refreshBtn" type="button">↺ Refresh Now</button>
+    </div>
+
+    <!-- Source filter bar -->
+    <div class="source-filter-bar" id="sourceFilterBar">
+      <span class="source-filter-label">Source:</span>
+      <button class="src-btn active" data-source="all">All Apps</button>
+      <button class="src-btn" data-source="dummy_app">Dummy App</button>
+    </div>
+
+    <!-- Status code filter bar -->
+    <div class="sc-filter-bar" id="scFilterBar">
+      <span class="sc-filter-label">Status Code:</span>
+      <button class="sc-btn sc-all active" data-sc="all" aria-label="Show all status codes">All</button>
+    </div>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable" data-col="Status Code">Status Code<span class="sort-icon">&#x25B4;&#x25BE;</span></th>
+            <th class="sortable" data-col="Error Code">Error Code<span class="sort-icon">&#x25B4;&#x25BE;</span></th>
+            <th>Description</th>
+            <th class="sortable" data-col="API">API<span class="sort-icon">&#x25B4;&#x25BE;</span></th>
+            <th class="sortable" data-col="Last Seen">Last Seen<span class="sort-icon">&#x25B4;&#x25BE;</span></th>
+            <th class="sortable" data-col="Count">Count<span class="sort-icon">&#x25B4;&#x25BE;</span></th>
+            <th>Trend (30d)</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+
+    <div class="pagination-bar">
+      <div class="pagination-meta">
+        <label for="pageSizeSelect">Rows per page</label>
+        <select id="pageSizeSelect" class="pagination-select">
+          <option value="10">10</option>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <span class="pagination-summary" id="paginationSummary">Showing 0 to 0 of 0 rows</span>
+      </div>
+      <div class="pagination-actions">
+        <button id="prevPageBtn" class="page-btn" type="button">Previous</button>
+        <span class="page-indicator" id="pageIndicator">Page 1 of 1</span>
+        <button id="nextPageBtn" class="page-btn" type="button">Next</button>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <aside class="chat-panel" id="chatPanel">
+    <div class="chat-header">
+      <div class="chat-title" id="chatTitle">AI Error Insights</div>
+      <button class="chat-close" id="chatClose" type="button">Close</button>
+    </div>
+    <div class="chat-body" id="chatBody"></div>
+    <div class="chat-ticket-bar" id="chatTicketBar">
+      <div class="chat-tb-title">ServiceNow</div>
+      <div class="chat-tb-status" id="chatTbStatus">No ticket raised for this error.</div>
+      <div class="chat-tb-actions" id="chatTbActions">
+        <button class="ctb ctb-create"  id="ctbCreate"  onclick="chatSnowCreate()">Create Ticket</button>
+        <button class="ctb ctb-autofix" id="ctbAutoFix" onclick="chatAutoFix()"    style="display:none">Fix This Error</button>
+        <button class="ctb ctb-fix"     id="ctbManFix"  onclick="chatSnowFix()"    style="display:none">Resolve</button>
+        <button class="ctb ctb-close"   id="ctbClose2"  onclick="chatSnowClose()"  style="display:none">Close</button>
+        <button class="ctb ctb-hold"    id="ctbHold"    onclick="chatSnowHold()"   style="display:none">On Hold</button>
+        <button class="ctb ctb-update"  id="ctbUpdate"  onclick="toggleUpdateForm()" style="display:none">Update</button>
+        <button class="ctb ctb-status"  id="ctbStatus"  onclick="chatSnowStatus()" style="display:none">Refresh</button>
+      </div>
+      <div class="fix-progress" id="fixProgress"></div>
+      <div class="chat-update-form" id="chatUpdateForm">
+        <textarea class="chat-update-ta" id="chatUpdateNotes" placeholder="Add work notes..."></textarea>
+        <div class="chat-update-row">
+          <select class="chat-state-sel" id="chatUpdateState">
+            <option value="">Change state...</option>
+            <option value="1">New</option>
+            <option value="2">In Progress</option>
+            <option value="3">On Hold</option>
+            <option value="4">Awaiting User Info</option>
+            <option value="5">Awaiting Problem</option>
+            <option value="6">Resolved</option>
+            <option value="7">Closed</option>
+            <option value="8">Cancelled</option>
+          </select>
+          <button class="ctb ctb-update" onclick="submitChatUpdate()" style="padding:5px 11px">Send</button>
+          <button class="ctb ctb-status" onclick="toggleUpdateForm()" style="padding:5px 9px">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input-wrap">
+      <input class="chat-input" id="chatInput" type="text" placeholder="Ask for RCA, checks, remediation, prevention..." />
+      <button class="chat-send" id="chatSend" type="button">Send</button>
+    </div>
+  </aside>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+          integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+          crossorigin="anonymous"></script>
+
+  <!-- Detail modal must live BEFORE the inline script so getElementById finds it when JS runs -->
+  <dialog class="modal-overlay" id="detailModal" aria-labelledby="modalHeading">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-header-icon" id="modalIcon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13 13 0 0 1 0 18"/><path d="M12 3a13 13 0 0 0 0 18"/></svg>
+        </div>
+        <div class="modal-title">
+          <h3 id="modalHeading">Detail</h3>
+          <p id="modalSubtitle"></p>
+        </div>
+        <button class="modal-close" id="modalCloseBtn" aria-label="Close detail panel">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="search" id="modalSearchInput" placeholder="Filter items…" aria-label="Filter list" />
+        </div>
+        <div id="modalTableWrap"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    let statusChart;
+    let apiChart;
+    let selectedError = null;
+    let chatHistory = [];
+    let chatSessionId = '';
+
+    let currentRows = [];
+    let allRows = [];
+    let statusCodeFilter = 'all';
+    let searchQuery = '';
+    let sortCol = 'Count';
+    let sortDir = 'desc';
+    let currentPage = 1;
+    let pageSize = 25;
+
+    /* ── Toast ── */
+    function toast(message, type = 'info', duration = 3200) {
+      const container = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+      el.className = `toast toast-${type}`;
+      el.textContent = `${icon}  ${message}`;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.classList.add('toast-out');
+        el.addEventListener('animationend', () => el.remove(), { once: true });
+      }, duration);
+    }
+
+    function openChatPanel() {
+      document.getElementById('chatPanel').classList.add('open');
+    }
+
+    function closeChatPanel() {
+      document.getElementById('chatPanel').classList.remove('open');
+    }
+
+    function addChatMessage(role, text) {
+      const body = document.getElementById('chatBody');
+      const div = document.createElement('div');
+      div.className = `chat-msg ${role}`;
+      div.textContent = text;
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+    }
+
+    async function askBedrock(userText) {
+      if (!selectedError) return;
+      const text = (userText || '').trim();
+      if (!text) return;
+
+      addChatMessage('user', text);
+      chatHistory.push({ role: 'user', content: text });
+
+      try {
+        const response = await fetch('/api/chat-insights', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            error: selectedError,
+            message: text,
+            history: chatHistory,
+            sessionId: chatSessionId,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          const err = payload.error || 'Bedrock request failed';
+          addChatMessage('assistant', `Error: ${err}`);
+          return;
+        }
+
+        const reply = payload.reply || 'No response returned.';
+        if (payload.sessionId) {
+          chatSessionId = payload.sessionId;
+        }
+        addChatMessage('assistant', reply);
+        chatHistory.push({ role: 'assistant', content: reply });
+      } catch (err) {
+        addChatMessage('assistant', `Error: ${err.message || 'Unable to reach chat service.'}`);
+      }
+    }
+
+    function openChatForError(rowData) {
+      selectedError = rowData;
+      chatHistory = [];
+      chatSessionId = '';
+      document.getElementById('chatBody').innerHTML = '';
+      document.getElementById('chatTitle').textContent = `AI Error Insights — ${rowData['Error Code']} / HTTP ${rowData['Status Code']}`;
+      openChatPanel();
+
+      const intro = [
+        `Selected: ${rowData['Description']}`,
+        `API: ${rowData['API']}`,
+        `Count: ${rowData['Count']} | Last Seen: ${rowData['Last Seen']}`,
+      ].join('\n');
+      addChatMessage('assistant', intro);
+
+      askBedrock('Please provide concise root cause analysis, immediate checks, and remediation steps.');
+    }
+
+    function buildApiUrl() {
+      const params = new URLSearchParams();
+
+      // From/To calendar (highest priority — most specific)
+      const fromEl = document.getElementById('dateFrom');
+      const toEl   = document.getElementById('dateTo');
+      const fromVal = fromEl ? fromEl.value : '';
+      const toVal   = toEl   ? toEl.value   : '';
+
+      if (fromVal || toVal) {
+        if (fromVal) params.set('from', fromVal);
+        if (toVal)   params.set('to',   toVal);
+      } else {
+        // Dropdown date (second priority)
+        const sel = document.getElementById('dateRangeSelect');
+        const selectedDate = sel ? sel.value : '';
+        if (selectedDate) {
+          params.set('date', selectedDate);
+        } else if (typeof activePreset !== 'undefined' && activePreset && activePreset !== 'all') {
+          // Preset buttons (lowest priority)
+          params.set('preset', activePreset);
+        }
+      }
+
+      // Source filter
+      if (typeof activeSource !== 'undefined' && activeSource && activeSource !== 'all') {
+        params.set('source', activeSource);
+      }
+
+      const query = params.toString();
+      return query ? '/api/dashboard-data?' + query : '/api/dashboard-data';
+    }
+
+    function buildPdfUrl() {
+      const query = buildApiUrl().split('?')[1];
+      return query ? `/api/dashboard-report.pdf?${query}` : '/api/dashboard-report.pdf';
+    }
+
+    // Color-blind-friendly palette for API distribution chart slices.
+    const API_CHART_COLORS = [
+      '#ff7a1a', '#121212', '#ff9f43', '#2a2520', '#d85f00',
+      '#704225', '#a05a2c', '#f3c7a0', '#8a8178', '#4b453f'
+    ];
+
+    function getApiLegendOptions() {
+      const isSmallScreen = window.matchMedia('(max-width: 960px)').matches;
+      return {
+        display: true,
+        position: isSmallScreen ? 'bottom' : 'right',
+        align: 'center',
+        labels: {
+          color: '#1a1a1a',
+          usePointStyle: true,
+          pointStyle: 'circle',
+          boxWidth: isSmallScreen ? 10 : 12,
+          boxHeight: isSmallScreen ? 10 : 12,
+          padding: isSmallScreen ? 16 : 12,
+          font: {
+            size: isSmallScreen ? 12 : 11,
+            weight: isSmallScreen ? '600' : '500',
+          },
+        },
+      };
+    }
+
+    function applyApiChartResponsiveOptions() {
+      if (!apiChart) return;
+      const isSmallScreen = window.matchMedia('(max-width: 960px)').matches;
+      apiChart.options.plugins.legend = getApiLegendOptions();
+      apiChart.options.layout = {
+        padding: isSmallScreen
+          ? { top: 4, right: 4, bottom: 8, left: 4 }
+          : { top: 2, right: 8, bottom: 2, left: 4 },
+      };
+      apiChart.options.cutout = isSmallScreen ? '56%' : '60%';
+      apiChart.update('none');
+    }
+
+    function statusColor(code) {
+      const n = Number(code);
+      if (n >= 500) return '#dc2626';
+      if (n >= 400) return '#8a4700';
+      return '#121212';
+    }
+
+    function fmtDate() {
+      return new Date().toLocaleString();
+    }
+
+    function populateStatusFilter(rows) {
+      const codes = [...new Set(rows.map(r => r['Status Code']))]
+        .sort((a, b) => Number(a) - Number(b));
+      const bar = document.getElementById('scFilterBar');
+      // Remove old code buttons, keep the label and All button
+      [...bar.querySelectorAll('.sc-btn:not(.sc-all)')].forEach(b => b.remove());
+
+      codes.forEach(code => {
+        const btn = document.createElement('button');
+        const n = Number(code);
+        btn.className = 'sc-btn ' + (n >= 500 ? 'sc-5xx' : 'sc-4xx');
+        btn.dataset.sc = code;
+        btn.textContent = code;
+        if (statusCodeFilter === code) {
+          btn.classList.add('active');
+          bar.querySelector('.sc-btn.sc-all').classList.remove('active');
+        }
+        btn.addEventListener('click', () => {
+          statusCodeFilter = code;
+          bar.querySelectorAll('.sc-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          applyStatusFilter();
+        });
+        bar.appendChild(btn);
+      });
+
+      bar.querySelector('.sc-btn.sc-all').onclick = function () {
+        statusCodeFilter = 'all';
+        bar.querySelectorAll('.sc-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        applyStatusFilter();
+      };
+    }
+
+    function applyStatusFilter() {
+      applySortAndSearch();
+    }
+
+    /* ── Sort ── */
+    function applySortAndSearch() {
+      let rows = statusCodeFilter === 'all'
+        ? [...allRows]
+        : allRows.filter(r => r['Status Code'] === statusCodeFilter);
+
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        rows = rows.filter(r =>
+          (r['Error Code']   || '').toLowerCase().includes(q) ||
+          (r['Description']  || '').toLowerCase().includes(q) ||
+          (r['API']          || '').toLowerCase().includes(q) ||
+          (r['Status Code']  || '').toLowerCase().includes(q)
+        );
+      }
+
+      rows.sort((a, b) => {
+        let av = a[sortCol] ?? '';
+        let bv = b[sortCol] ?? '';
+        if (sortCol === 'Count' || sortCol === 'Status Code') {
+          av = Number(av); bv = Number(bv);
+        } else {
+          av = String(av).toLowerCase(); bv = String(bv).toLowerCase();
+        }
+        if (av < bv) return sortDir === 'asc' ? -1 :  1;
+        if (av > bv) return sortDir === 'asc' ?  1 : -1;
+        return 0;
+      });
+
+      currentRows = rows;
+      currentPage = 1;
+      renderRows(
+        statusChart ? statusChart.data.labels : [],
+        apiChart    ? apiChart.data.labels    : []
+      );
+      updateSortHeaders();
+    }
+
+    function updateSortHeaders() {
+      document.querySelectorAll('th.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.col === sortCol) {
+          th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+          const icon = th.querySelector('.sort-icon');
+          if (icon) icon.innerHTML = sortDir === 'asc' ? '&#x25B4;' : '&#x25BE;';
+        } else {
+          const icon = th.querySelector('.sort-icon');
+          if (icon) icon.innerHTML = '&#x25B4;&#x25BE;';
+        }
+      });
+    }
+
+    /* ── Sparkline ── */
+    function buildSparkline(dates) {
+      if (!dates || dates.length === 0) return null;
+
+      // Aggregate counts per date (dates array may contain duplicates from CSV)
+      const counts = {};
+      dates.forEach(d => { counts[d] = (counts[d] || 0) + 1; });
+
+      // Last 14 days
+      const labels = [];
+      const today = new Date();
+      for (let i = 13; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        labels.push(d.toISOString().slice(0, 10));
+      }
+      const values = labels.map(l => counts[l] || 0);
+      const max = Math.max(...values, 1);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 90;
+      canvas.height = 28;
+      canvas.style.width  = '90px';
+      canvas.style.height = '28px';
+
+      const ctx = canvas.getContext('2d');
+      const w = 90, h = 28, pad = 2;
+      const step = (w - pad * 2) / (labels.length - 1);
+
+      // Gradient fill
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(255,122,26,0.28)');
+      grad.addColorStop(1, 'rgba(255,122,26,0.0)');
+
+      ctx.beginPath();
+      values.forEach((v, i) => {
+        const x = pad + i * step;
+        const y = h - pad - ((v / max) * (h - pad * 2));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      // Close path for fill
+      ctx.lineTo(pad + (labels.length - 1) * step, h);
+      ctx.lineTo(pad, h);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Line
+      ctx.beginPath();
+      values.forEach((v, i) => {
+        const x = pad + i * step;
+        const y = h - pad - ((v / max) * (h - pad * 2));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = '#ff7a1a';
+      ctx.lineWidth = 1.6;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+
+      // Highlight last point
+      const lastX = pad + (labels.length - 1) * step;
+      const lastY = h - pad - ((values[values.length - 1] / max) * (h - pad * 2));
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff7a1a';
+      ctx.fill();
+
+      return canvas;
+    }
+
+    /* ── CSV Export ── */
+    function exportCsv() {
+      const headers = ['Status Code', 'Error Code', 'Description', 'API', 'Last Seen', 'Count'];
+      const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const lines = [
+        headers.join(','),
+        ...currentRows.map(r => headers.map(h => escape(r[h])).join(','))
+      ];
+      const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `error-dashboard-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast(`Exported ${currentRows.length} rows as CSV`, 'success');
+    }
+
+    function getPagedRows() {
+      const start = (currentPage - 1) * pageSize;
+      return currentRows.slice(start, start + pageSize);
+    }
+
+    function getTotalPages() {
+      return Math.max(1, Math.ceil(currentRows.length / pageSize));
+    }
+
+    function updatePaginationUi() {
+      const totalRows = currentRows.length;
+      const totalPages = getTotalPages();
+      const start = totalRows === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+      const end = Math.min(currentPage * pageSize, totalRows);
+
+      document.getElementById('pageIndicator').textContent = `Page ${currentPage} of ${totalPages}`;
+      document.getElementById('paginationSummary').textContent = `Showing ${start} to ${end} of ${totalRows} rows`;
+      document.getElementById('prevPageBtn').disabled = currentPage === 1;
+      document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+    }
+
+    function renderRows(statusLabels, apiLabels) {
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+
+      getPagedRows().forEach(row => {
+        const tr = document.createElement('tr');
+        const statusClass = Number(row['Status Code']) >= 500 ? 's5' : 's4';
+        tr.dataset.statusCode = row['Status Code'];
+        tr.dataset.api = row['API'];
+        const sparkCanvas = buildSparkline(row['Dates'] || []);
+
+        // Build each cell with textContent to prevent XSS from untrusted log data.
+        const tdStatus = document.createElement('td');
+        const pill = document.createElement('span');
+        pill.className = `pill ${statusClass}`;
+        pill.textContent = row['Status Code'];
+        tdStatus.appendChild(pill);
+
+        const tdErrorCode = document.createElement('td');
+        tdErrorCode.textContent = row['Error Code'];
+
+        const tdDescription = document.createElement('td');
+        tdDescription.textContent = row['Description'];
+
+        const tdApi = document.createElement('td');
+        tdApi.textContent = row['API'];
+
+        const tdLastSeen = document.createElement('td');
+        tdLastSeen.textContent = row['Last Seen'] || '—';
+
+        const tdCount = document.createElement('td');
+        tdCount.className = 'count';
+        tdCount.textContent = row['Count'];
+
+        const tdSpark = document.createElement('td');
+        tdSpark.className = 'spark-cell';
+        if (sparkCanvas) {
+          tdSpark.appendChild(sparkCanvas);
+        } else {
+          const dash = document.createElement('span');
+          dash.style.cssText = 'color:var(--muted);font-size:0.75rem';
+          dash.textContent = '—';
+          tdSpark.appendChild(dash);
+        }
+
+        tr.appendChild(tdStatus);
+        tr.appendChild(tdErrorCode);
+        tr.appendChild(tdDescription);
+        tr.appendChild(tdApi);
+        tr.appendChild(tdLastSeen);
+        tr.appendChild(tdCount);
+        tr.appendChild(tdSpark);
+        tr.addEventListener('click', () => {
+          onRowClick(tr, statusLabels, apiLabels);
+          openChatForError(row);
+        });
+        tbody.appendChild(tr);
+      });
+
+      updatePaginationUi();
+    }
+
+    function highlightRowsByPredicate(predicate, hlStatus, hlApi, statusLabels, apiLabels) {
+      const firstIndex = currentRows.findIndex(predicate);
+      if (firstIndex === -1) return;
+
+      currentPage = Math.floor(firstIndex / pageSize) + 1;
+      renderRows(statusLabels, apiLabels);
+
+      // Highlight every matching row on the current page
+      const pagedRows = getPagedRows();
+      let firstMatchEl = null;
+      document.querySelectorAll('#rows tr').forEach((tr, i) => {
+        if (pagedRows[i] && predicate(pagedRows[i])) {
+          tr.classList.add('row-selected');
+          if (!firstMatchEl) firstMatchEl = tr;
+        }
+      });
+      if (firstMatchEl) {
+        firstMatchEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      // Dim non-selected bars
+      if (statusChart) {
+        const base = statusChart.data.labels.map(l => statusColor(l));
+        statusChart.data.datasets[0].backgroundColor = base.map((c, i) =>
+          !hlStatus || statusChart.data.labels[i] === hlStatus ? c : c + '33'
+        );
+        statusChart.data.datasets[0].borderWidth = statusChart.data.labels.map(l =>
+          hlStatus && l === hlStatus ? 3 : 0
+        );
+        statusChart.data.datasets[0].borderColor = statusChart.data.labels.map(l =>
+          hlStatus && l === hlStatus ? statusColor(l) : 'transparent'
+        );
+        statusChart.update('none');
+      }
+
+      // Dim non-selected doughnut slices
+      if (apiChart) {
+        apiChart.data.datasets[0].backgroundColor = apiChart.data.labels.map((l, i) =>
+          !hlApi || l === hlApi
+            ? API_CHART_COLORS[i % API_CHART_COLORS.length]
+            : API_CHART_COLORS[i % API_CHART_COLORS.length] + '33'
+        );
+        apiChart.data.datasets[0].borderWidth = apiChart.data.labels.map(l =>
+          hlApi && l === hlApi ? 3 : 0
+        );
+        apiChart.data.datasets[0].borderColor = apiChart.data.labels.map((l, i) =>
+          hlApi && l === hlApi ? API_CHART_COLORS[i % API_CHART_COLORS.length] : 'transparent'
+        );
+        apiChart.update('none');
+      }
+    }
+
+    // ── Module-level dashboard data cache (used by detail modals) ────────────
+    let dashboardData = null;
+
+    async function loadDashboard() {
+      const res = await fetch(buildApiUrl());
+      if (!res.ok) {
+        throw new Error('Unable to load dashboard data.');
+      }
+      const data = await res.json();
+      dashboardData = data;   // cache for modal use
+
+      document.getElementById('m-unique').textContent = data.summary.uniqueErrorTypes;
+      document.getElementById('m-total').textContent = data.summary.totalErrorEvents;
+      document.getElementById('m-status').textContent = data.summary.statusCodeCount;
+      document.getElementById('m-api').textContent = data.summary.apiCount;
+      document.getElementById('last-updated').textContent = `Last updated: ${fmtDate()}`;
+
+      // Story 4968/4970: update retention banner + build dropdown from server data
+      if (data.filter && data.filter.retentionDays) {
+        const days   = data.filter.retentionDays;
+        const cutoff = data.filter.cutoffDate;
+        const today  = data.filter.today || new Date().toISOString().slice(0, 10);
+
+        // Show retention banner
+        const banner = document.getElementById('retentionBanner');
+        if (banner) {
+          banner.style.display = 'flex';
+          const daysEl = document.getElementById('retDays');
+          const coEl   = document.getElementById('retCutoff');
+          if (daysEl) daysEl.textContent   = days;
+          if (coEl)   coEl.textContent     = cutoff || '—';
+        }
+
+        // Build date dropdown options from the retention window
+        // Always rebuild on first load (length <= 1 means only the placeholder)
+        // Also rebuild if retentionDays changed
+        const sel = document.getElementById('dateRangeSelect');
+        const prevDays = sel ? sel.dataset.retentionDays : null;
+        if (sel && (sel.options.length <= 1 || prevDays !== String(days))) {
+          buildDateDropdown(days, cutoff, today);
+          if (sel) sel.dataset.retentionDays = String(days);
+        }
+      }
+
+      const statusLabels = Object.keys(data.byStatus).sort((a, b) => Number(a) - Number(b));
+      const statusValues = statusLabels.map(k => data.byStatus[k]);
+      const statusColors = statusLabels.map(statusColor);
+
+      // Build a lookup: status code → list of {errorCode, description} for tooltip
+      const statusDetails = {};
+      data.rows.forEach(row => {
+        const sc = row['Status Code'];
+        if (!statusDetails[sc]) statusDetails[sc] = [];
+        statusDetails[sc].push({
+          errorCode: row['Error Code'] || '—',
+          description: row['Description'] || '—',
+          lastSeen: row['Last Seen'] || '—',
+          count: row['Count'],
+        });
+      });
+
+      const topApis = Object.entries(data.byApi)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+      const apiLabels = topApis.map(([k]) => k);
+      const apiValues = topApis.map(([, v]) => v);
+
+      if (statusChart) statusChart.destroy();
+      statusChart = new Chart(document.getElementById('statusChart'), {
+        type: 'bar',
+        data: {
+          labels: statusLabels,
+          datasets: [{
+            label: 'Errors',
+            data: statusValues,
+            backgroundColor: statusColors,
+            borderRadius: 6,
+            borderSkipped: false,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title(items) {
+                  return `HTTP ${items[0].label}  —  ${items[0].raw} events`;
+                },
+                beforeBody(items) {
+                  const sc = items[0].label;
+                  const entries = statusDetails[sc] || [];
+                  if (!entries.length) return [];
+                  const lines = ['', 'Error Code   Last Seen (Timestamp)   Description   Count'];
+                  entries
+                    .sort((a, b) => b.count - a.count)
+                    .forEach(e => {
+                      lines.push(`${e.errorCode.padEnd(12)} ${e.lastSeen.padEnd(20)} ${e.description.substring(0, 20)}   ×${e.count}`);
+                    });
+                  return lines;
+                },
+                label() { return ''; },
+              },
+              padding: 12,
+              bodyFont: { family: 'Courier New, monospace', size: 12 },
+              titleFont: { size: 13, weight: 'bold' },
+              displayColors: false,
+              backgroundColor: 'rgba(20,30,60,0.92)',
+              borderColor: 'rgba(255,255,255,0.12)',
+              borderWidth: 1,
+            },
+          },
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+          onClick(event, elements) {
+            if (!elements.length) return;
+            const clickedLabel = statusLabels[elements[0].index];
+            highlightRowsByPredicate(row => row['Status Code'] === clickedLabel, clickedLabel, null, statusLabels, apiLabels);
+          },
+        }
+      });
+
+      // Build a lookup: api → list of {errorCode, description, statusCode, count} for tooltip
+      const apiDetails = {};
+      data.rows.forEach(row => {
+        const api = row['API'];
+        if (!apiDetails[api]) apiDetails[api] = [];
+        apiDetails[api].push({
+          statusCode: row['Status Code'] || '—',
+          errorCode: row['Error Code'] || '—',
+          description: row['Description'] || '—',
+          lastSeen: row['Last Seen'] || '—',
+          count: row['Count'],
+        });
+      });
+
+      if (apiChart) apiChart.destroy();
+      apiChart = new Chart(document.getElementById('apiChart'), {
+        type: 'doughnut',
+        data: {
+          labels: apiLabels,
+          datasets: [{
+            data: apiValues,
+            backgroundColor: apiLabels.map((_, i) => API_CHART_COLORS[i % API_CHART_COLORS.length])
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: getApiLegendOptions(),
+            tooltip: {
+              callbacks: {
+                title(items) {
+                  return `${items[0].label}  —  ${items[0].raw} events`;
+                },
+                beforeBody(items) {
+                  const api = items[0].label;
+                  const entries = apiDetails[api] || [];
+                  if (!entries.length) return [];
+                  const lines = ['', 'HTTP   Error Code   Last Seen (Timestamp)   Description   Count'];
+                  entries
+                    .sort((a, b) => b.count - a.count)
+                    .forEach(e => {
+                      lines.push(`${e.statusCode}    ${e.errorCode.padEnd(11)} ${e.lastSeen.padEnd(20)} ${e.description.substring(0, 16)}   ×${e.count}`);
+                    });
+                  return lines;
+                },
+                label() { return ''; },
+              },
+              padding: 12,
+              bodyFont: { family: 'Courier New, monospace', size: 12 },
+              titleFont: { size: 13, weight: 'bold' },
+              displayColors: false,
+              backgroundColor: 'rgba(20,30,60,0.92)',
+              borderColor: 'rgba(255,255,255,0.12)',
+              borderWidth: 1,
+            },
+          },
+          onClick(event, elements) {
+            if (!elements.length) return;
+            const clickedLabel = apiLabels[elements[0].index];
+            highlightRowsByPredicate(row => row['API'] === clickedLabel, null, clickedLabel, statusLabels, apiLabels);
+          },
+        }
+      });
+      applyApiChartResponsiveOptions();
+
+      allRows = [...data.rows].sort((a, b) => b.Count - a.Count);
+      populateStatusFilter(allRows);
+      applySortAndSearch();
+    }
+
+    async function downloadPdfReport() {
+      const downloadBtn = document.getElementById('downloadPdfBtn');
+      const status = document.getElementById('downloadStatus');
+      downloadBtn.disabled = true;
+      status.textContent = 'Preparing PDF...';
+
+      try {
+        const response = await fetch(buildPdfUrl());
+        const contentType = response.headers.get('content-type') || '';
+        if (!response.ok) {
+          let message = 'Unable to generate the PDF report.';
+          if (contentType.includes('application/json')) {
+            const payload = await response.json();
+            if (payload.error) {
+              message = payload.error;
+            }
+          }
+          throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const contentDisposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = contentDisposition.match(/filename="?([^\"]+)"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : 'error-dashboard-report.pdf';
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+        toast('PDF report downloaded', 'success');
+      } catch (err) {
+        toast(err.message || 'PDF download failed.', 'error');
+      } finally {
+        downloadBtn.disabled = false;
+        status.textContent = '';
+      }
+    }
+
+    function clearChartSelections() {
+      if (statusChart) {
+        const ds = statusChart.data.datasets[0];
+        ds.backgroundColor = statusChart.data.labels.map(l => statusColor(l));
+        ds.borderWidth = statusChart.data.labels.map(() => 0);
+        statusChart.update('none');
+      }
+      if (apiChart) {
+        const ds = apiChart.data.datasets[0];
+        ds.backgroundColor = apiChart.data.labels.map((_, i) => API_CHART_COLORS[i % API_CHART_COLORS.length]);
+        ds.borderWidth = apiChart.data.labels.map(() => 0);
+        apiChart.update('none');
+      }
+    }
+
+    function onRowClick(tr, statusLabels, apiLabels) {
+      const allRows = document.querySelectorAll('#rows tr');
+
+      // Clicking the already-selected row deselects everything
+      if (tr.classList.contains('row-selected')) {
+        allRows.forEach(r => r.classList.remove('row-selected'));
+        clearChartSelections();
+        return;
+      }
+
+      allRows.forEach(r => r.classList.remove('row-selected'));
+      tr.classList.add('row-selected');
+
+      const selectedStatus = tr.dataset.statusCode;
+      const selectedApi = tr.dataset.api;
+
+      // --- Highlight bar chart ---
+      if (statusChart) {
+        const base = statusChart.data.labels.map(l => statusColor(l));
+        statusChart.data.datasets[0].backgroundColor = base.map((c, i) =>
+          statusChart.data.labels[i] === selectedStatus ? c : c + '33'
+        );
+        statusChart.data.datasets[0].borderWidth = statusChart.data.labels.map((l, i) =>
+          l === selectedStatus ? 3 : 0
+        );
+        statusChart.data.datasets[0].borderColor = statusChart.data.labels.map((l) =>
+          l === selectedStatus ? statusColor(l) : 'transparent'
+        );
+        statusChart.update('none');
+      }
+
+      // --- Highlight doughnut chart ---
+      if (apiChart) {
+        apiChart.data.datasets[0].backgroundColor = apiChart.data.labels.map((l, i) =>
+          l === selectedApi
+            ? API_CHART_COLORS[i % API_CHART_COLORS.length]
+            : API_CHART_COLORS[i % API_CHART_COLORS.length] + '33'
+        );
+        apiChart.data.datasets[0].borderWidth = apiChart.data.labels.map(l =>
+          l === selectedApi ? 3 : 0
+        );
+        apiChart.data.datasets[0].borderColor = apiChart.data.labels.map((l, i) =>
+          l === selectedApi ? API_CHART_COLORS[i % API_CHART_COLORS.length] : 'transparent'
+        );
+        apiChart.update('none');
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      loadDashboard().catch(console.error);
+    });
+
+    document.getElementById('exportCsvBtn').addEventListener('click', exportCsv);
+
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      searchQuery = e.target.value.trim();
+      currentPage = 1;
+      applySortAndSearch();
+    });
+
+    document.querySelectorAll('th.sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (sortCol === col) {
+          sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          sortCol = col;
+          sortDir = col === 'Count' ? 'desc' : 'asc';
+        }
+        currentPage = 1;
+        applySortAndSearch();
+      });
+    });
+
+    document.getElementById('pageSizeSelect').addEventListener('change', (event) => {
+      pageSize = Number(event.target.value);
+      currentPage = 1;
+      renderRows(statusChart?.data?.labels || [], apiChart?.data?.labels || []);
+    });
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => {
+      if (currentPage === 1) return;
+      currentPage -= 1;
+      renderRows(statusChart?.data?.labels || [], apiChart?.data?.labels || []);
+    });
+
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
+      if (currentPage >= getTotalPages()) return;
+      currentPage += 1;
+      renderRows(statusChart?.data?.labels || [], apiChart?.data?.labels || []);
+    });
+
+    document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+      downloadPdfReport().catch(console.error);
+    });
+
+    let apiChartResizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (!apiChart) return;
+      window.clearTimeout(apiChartResizeTimer);
+      apiChartResizeTimer = window.setTimeout(() => {
+        applyApiChartResponsiveOptions();
+      }, 120);
+    });
+
+    // ── Date dropdown (Stories 4968/4970) ──────────────────────────────────
+    // Builds dropdown options from the server's retention window.
+    // Options: "Full period (N days)", then one entry per week/month
+    // going back to the retention cutoff.
+    function buildDateDropdown(retentionDays, cutoffDate, today) {
+      const sel = document.getElementById('dateRangeSelect');
+      if (!sel) return;
+
+      // Guard: if no cutoff date provided, calculate from retention days
+      if (!cutoffDate || cutoffDate === 'null') {
+        const d = new Date();
+        d.setDate(d.getDate() - retentionDays);
+        cutoffDate = d.toISOString().slice(0, 10);
+      }
+      if (!today || today === 'null') {
+        today = new Date().toISOString().slice(0, 10);
+      }
+
+      const todayDt   = new Date(today      + 'T00:00:00');
+      const cutoffDt  = new Date(cutoffDate + 'T00:00:00');
+
+      // Compute fixed date strings
+      const todayStr  = today;
+      const last7Dt   = new Date(todayDt); last7Dt.setDate(last7Dt.getDate() - 7);
+      const last7Str  = last7Dt.toISOString().slice(0, 10);
+
+      // Clear and rebuild
+      sel.innerHTML = '';
+
+      // ── Fixed entries (always present regardless of retention) ──────────────
+
+      // 1. All Time — shows full retention window (no date cap)
+      const allOpt        = document.createElement('option');
+      allOpt.value        = '';
+      allOpt.textContent  = 'All Time';
+      sel.appendChild(allOpt);
+
+      // 2. Today
+      const todayOpt      = document.createElement('option');
+      todayOpt.value      = todayStr;
+      todayOpt.textContent = `Today — ${_fmtDateLabel(todayDt)}`;
+      sel.appendChild(todayOpt);
+
+      // 3. Last 7 Days (only shown if 7 days is within the retention window)
+      if (last7Dt >= cutoffDt) {
+        const last7Opt        = document.createElement('option');
+        last7Opt.value        = last7Str;
+        last7Opt.textContent  = `Last 7 Days — up to ${_fmtDateLabel(last7Dt)}`;
+        sel.appendChild(last7Opt);
+      }
+
+      // ── Customer retention-based options ────────────────────────────────────
+      // Monthly steps going back through the retention window.
+      // Starts after 7 days so it doesn't duplicate the fixed entry above.
+
+      const options = [];
+      let cursor = new Date(todayDt);
+      cursor.setDate(cursor.getDate() - 30);  // start at 1 month back
+
+      while (cursor > cutoffDt) {
+        const dateStr  = cursor.toISOString().slice(0, 10);
+        const diffDays = Math.round((todayDt - cursor) / 86400000);
+        const months   = Math.round(diffDays / 30);
+
+        const label = months === 1
+          ? `Last 1 Month — up to ${_fmtDateLabel(cursor)}`
+          : `Last ${months} Months — up to ${_fmtDateLabel(cursor)}`;
+
+        const opt = document.createElement('option');
+        opt.value       = dateStr;
+        opt.textContent = label;
+        options.push(opt);
+
+        cursor.setDate(cursor.getDate() - 30);
+      }
+
+      options.forEach(o => sel.appendChild(o));
+
+      // ── Retention window summary at the bottom ───────────────────────────────
+      const divider       = document.createElement('option');
+      divider.disabled    = true;
+      divider.textContent = '───────────────';
+      sel.appendChild(divider);
+
+      const infoOpt       = document.createElement('option');
+      infoOpt.value       = cutoffDate;
+      infoOpt.textContent = `Retention window: ${retentionDays} days (from ${cutoffDate})`;
+      sel.appendChild(infoOpt);
+    }
+
+    function _fmtDateLabel(dt) {
+      return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    // Apply button for From/To calendar range
+    const applyBtn = document.getElementById('applyRange');
+    if (applyBtn) {
+      applyBtn.addEventListener('click', function() {
+        const fromVal = document.getElementById('dateFrom').value;
+        const toVal   = document.getElementById('dateTo').value;
+        if (!fromVal && !toVal) return;
+        // Clear preset buttons and dropdown
+        activePreset = '';
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        const sel = document.getElementById('dateRangeSelect');
+        if (sel) sel.value = '';
+        // Show badge
+        const badge = document.getElementById('filterBadge');
+        if (badge) {
+          badge.style.display = 'inline-block';
+          badge.textContent = (fromVal || '...') + ' → ' + (toVal || '...');
+        }
+        loadDashboard().catch(console.error);
+      });
+    }
+
+    // Handle dropdown selection — clears preset and From/To calendar
+    document.getElementById('dateRangeSelect').addEventListener('change', function() {
+      const selectedDate = this.value;
+      const badge = document.getElementById('filterBadge');
+      if (selectedDate) {
+        // Clear preset buttons and From/To calendar
+        activePreset = '';
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        const fromEl = document.getElementById('dateFrom');
+        const toEl   = document.getElementById('dateTo');
+        if (fromEl) fromEl.value = '';
+        if (toEl)   toEl.value   = '';
+        // Show badge
+        if (badge) {
+          badge.style.display = 'inline-block';
+          const opt = this.options[this.selectedIndex];
+          badge.textContent   = opt.textContent.split('—')[0].trim();
+        }
+      } else {
+        // Dropdown reset — restore All Time as active
+        activePreset = 'all';
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        const allBtn = document.querySelector('.preset-btn[data-preset="all"]');
+        if (allBtn) allBtn.classList.add('active');
+        if (badge) badge.style.display = 'none';
+      }
+      loadDashboard().catch(console.error);
+    });
+
+    document.getElementById('chatClose').addEventListener('click', closeChatPanel);
+    document.getElementById('chatSend').addEventListener('click', () => {
+      const input = document.getElementById('chatInput');
+      const text = input.value;
+      input.value = '';
+      askBedrock(text);
+    });
+
+    document.getElementById('chatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('chatSend').click();
+      }
+    });
+
+    const REFRESH_INTERVAL = 30;
+    let countdownSec = REFRESH_INTERVAL;
+    const CIRCUMFERENCE = 44; // 2π × r≈7
+
+    function tickCountdown() {
+      countdownSec -= 1;
+      if (countdownSec < 0) countdownSec = REFRESH_INTERVAL;
+      const frac = countdownSec / REFRESH_INTERVAL;
+      const circle = document.getElementById('countdownCircle');
+      if (circle) {
+        circle.style.strokeDashoffset = CIRCUMFERENCE * (1 - frac);
+      }
+      document.getElementById('countdownLabel').textContent = countdownSec + 's';
+    }
+
+    loadDashboard().catch(console.error);
+    setInterval(() => {
+      countdownSec = 0;
+      tickCountdown();
+      countdownSec = REFRESH_INTERVAL;
+      loadDashboard().catch(console.error);
+    }, REFRESH_INTERVAL * 1000);
+    setInterval(tickCountdown, 1000);
+
+    // ── Detail modal logic ────────────────────────────────────────────────────
+    function openDetailModal(type) {
+      if (!dashboardData) return;
+      const overlay    = document.getElementById('detailModal');
+      const titleEl    = document.getElementById('modalHeading');
+      const subtitleEl = document.getElementById('modalSubtitle');
+      const iconEl     = document.getElementById('modalIcon');
+      const tableWrap  = document.getElementById('modalTableWrap');
+      const searchEl   = document.getElementById('modalSearchInput');
+      searchEl.value   = '';
+
+      if (type === 'status') {
+        const entries  = Object.entries(dashboardData.byStatus).sort((a, b) => Number(a[0]) - Number(b[0]));
+        const maxCount = Math.max(...entries.map(([, v]) => v), 1);
+        const totalAll = entries.reduce((s, [, v]) => s + v, 0);
+        titleEl.textContent    = 'Status Codes Breakdown';
+        subtitleEl.textContent = `${entries.length} unique HTTP status code${entries.length !== 1 ? 's' : ''} in current view`;
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13 13 0 0 1 0 18"/><path d="M12 3a13 13 0 0 0 0 18"/></svg>`;
+
+        const scBadgeStyle = (sc) => {
+          const c = Number(sc);
+          if (c >= 500) return 'background:#dc2626;color:#fff';
+          if (c >= 400) return 'background:#b85a00;color:#fff';
+          if (c >= 300) return 'background:#2f6f9f;color:#fff';
+          if (c >= 200) return 'background:#2f7a3f;color:#fff';
+          return 'background:#555;color:#fff';
+        };
+
+        const renderStatusTable = (filter = '') => {
+          const rows = entries.filter(([sc]) => sc.includes(filter));
+          if (!rows.length) {
+            tableWrap.innerHTML = `<div class="modal-empty">No matching status codes.</div>`;
+            return;
+          }
+          const html = rows.map(([sc, count]) => {
+            const share = totalAll ? ((count / totalAll) * 100).toFixed(1) : 0;
+            const barW  = ((count / maxCount) * 100).toFixed(0);
+            return `<tr>
+              <td><span class="modal-badge" style="${scBadgeStyle(sc)}">HTTP ${sc}</span></td>
+              <td class="modal-bar-val">${count.toLocaleString()}</td>
+              <td style="color:var(--muted);font-size:0.78rem">${share}%</td>
+              <td style="min-width:100px">
+                <div class="modal-bar-wrap">
+                  <div class="modal-bar" style="width:${barW}%"></div>
+                </div>
+              </td>
+            </tr>`;
+          }).join('');
+          tableWrap.innerHTML = `<table class="modal-table">
+            <thead><tr><th>Status Code</th><th>Errors</th><th>Share</th><th>Volume</th></tr></thead>
+            <tbody>${html}</tbody>
+          </table>`;
+        };
+
+        renderStatusTable();
+        searchEl.oninput = (e) => renderStatusTable(e.target.value.trim());
+
+      } else if (type === 'api') {
+        const entries  = Object.entries(dashboardData.byApi).sort((a, b) => b[1] - a[1]);
+        const maxCount = Math.max(...entries.map(([, v]) => v), 1);
+        const totalAll = entries.reduce((s, [, v]) => s + v, 0);
+        titleEl.textContent    = 'APIs Impacted';
+        subtitleEl.textContent = `${entries.length} unique endpoint${entries.length !== 1 ? 's' : ''} affected in current view`;
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 0 6l1 1a4 4 0 0 0 6-6l-1-1"/><path d="M14 11a4 4 0 0 0 0-6l-1-1a4 4 0 0 0-6 6l1 1"/><path d="M9 15l6-6"/></svg>`;
+
+        const renderApiTable = (filter = '') => {
+          const rows = entries.filter(([api]) => api.toLowerCase().includes(filter.toLowerCase()));
+          if (!rows.length) {
+            tableWrap.innerHTML = `<div class="modal-empty">No matching APIs.</div>`;
+            return;
+          }
+          const html = rows.map(([api, count], idx) => {
+            const share = totalAll ? ((count / totalAll) * 100).toFixed(1) : 0;
+            const barW  = ((count / maxCount) * 100).toFixed(0);
+            return `<tr>
+              <td style="color:var(--muted);font-size:0.74rem;font-weight:700;text-align:center">${idx + 1}</td>
+              <td style="font-family:monospace;font-size:0.78rem;word-break:break-all">${api}</td>
+              <td class="modal-bar-val">${count.toLocaleString()}</td>
+              <td style="color:var(--muted);font-size:0.78rem">${share}%</td>
+              <td style="min-width:100px">
+                <div class="modal-bar-wrap">
+                  <div class="modal-bar" style="width:${barW}%"></div>
+                </div>
+              </td>
+            </tr>`;
+          }).join('');
+          tableWrap.innerHTML = `<table class="modal-table">
+            <thead><tr><th>#</th><th>API Path</th><th>Errors</th><th>Share</th><th>Volume</th></tr></thead>
+            <tbody>${html}</tbody>
+          </table>`;
+        };
+
+        renderApiTable();
+        searchEl.oninput = (e) => renderApiTable(e.target.value.trim());
+
+      } else if (type === 'unique') {
+        const grouped = Object.values(
+          (dashboardData.rows || []).reduce((acc, row) => {
+            const code = row['Error Code'] || '—';
+            if (!acc[code]) {
+              acc[code] = {
+                errorCode: code,
+                description: row['Description'] || '—',
+                statusCode: row['Status Code'] || '—',
+                count: 0,
+              };
+            }
+            acc[code].count += Number(row['Count'] || 0);
+            return acc;
+          }, {})
+        ).sort((a, b) => b.count - a.count);
+
+        const maxCount = Math.max(...grouped.map((r) => r.count), 1);
+        const totalAll = grouped.reduce((sum, r) => sum + r.count, 0);
+        titleEl.textContent = 'Unique Error Types';
+        subtitleEl.textContent = `${grouped.length} distinct error code${grouped.length !== 1 ? 's' : ''} in current view`;
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3-5 3z"/></svg>`;
+
+        const renderUniqueTable = (filter = '') => {
+          const q = filter.toLowerCase();
+          const rows = grouped.filter((r) =>
+            r.errorCode.toLowerCase().includes(q) ||
+            r.description.toLowerCase().includes(q) ||
+            String(r.statusCode).toLowerCase().includes(q)
+          );
+          if (!rows.length) {
+            tableWrap.innerHTML = `<div class="modal-empty">No matching error types.</div>`;
+            return;
+          }
+          const html = rows.map((r, idx) => {
+            const share = totalAll ? ((r.count / totalAll) * 100).toFixed(1) : 0;
+            const barW = ((r.count / maxCount) * 100).toFixed(0);
+            return `<tr>
+              <td style="color:var(--muted);font-size:0.74rem;font-weight:700;text-align:center">${idx + 1}</td>
+              <td style="font-family:monospace;font-size:0.78rem">${r.errorCode}</td>
+              <td style="max-width:280px">${r.description}</td>
+              <td><span class="modal-badge" style="${Number(r.statusCode) >= 500 ? 'background:#dc2626;color:#fff' : Number(r.statusCode) >= 400 ? 'background:#b85a00;color:#fff' : 'background:#555;color:#fff'}">HTTP ${r.statusCode}</span></td>
+              <td class="modal-bar-val">${r.count.toLocaleString()}</td>
+              <td style="color:var(--muted);font-size:0.78rem">${share}%</td>
+              <td style="min-width:100px"><div class="modal-bar-wrap"><div class="modal-bar" style="width:${barW}%"></div></div></td>
+            </tr>`;
+          }).join('');
+          tableWrap.innerHTML = `<table class="modal-table">
+            <thead><tr><th>#</th><th>Error Code</th><th>Description</th><th>Status</th><th>Events</th><th>Share</th><th>Volume</th></tr></thead>
+            <tbody>${html}</tbody>
+          </table>`;
+        };
+
+        renderUniqueTable();
+        searchEl.oninput = (e) => renderUniqueTable(e.target.value.trim());
+
+      } else {
+        const entries = [...(dashboardData.rows || [])]
+          .sort((a, b) => Number(b['Count'] || 0) - Number(a['Count'] || 0));
+        const maxCount = Math.max(...entries.map((r) => Number(r['Count'] || 0)), 1);
+        const totalAll = entries.reduce((sum, r) => sum + Number(r['Count'] || 0), 0);
+        titleEl.textContent = 'Total Error Events';
+        subtitleEl.textContent = `${totalAll.toLocaleString()} total event${totalAll !== 1 ? 's' : ''} across ${entries.length} row${entries.length !== 1 ? 's' : ''}`;
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>`;
+
+        const renderTotalTable = (filter = '') => {
+          const q = filter.toLowerCase();
+          const rows = entries.filter((r) =>
+            String(r['Error Code'] || '').toLowerCase().includes(q) ||
+            String(r['Description'] || '').toLowerCase().includes(q) ||
+            String(r['API'] || '').toLowerCase().includes(q) ||
+            String(r['Status Code'] || '').toLowerCase().includes(q)
+          );
+          if (!rows.length) {
+            tableWrap.innerHTML = `<div class="modal-empty">No matching error events.</div>`;
+            return;
+          }
+          const html = rows.map((r, idx) => {
+            const count = Number(r['Count'] || 0);
+            const share = totalAll ? ((count / totalAll) * 100).toFixed(1) : 0;
+            const barW = ((count / maxCount) * 100).toFixed(0);
+            return `<tr>
+              <td style="color:var(--muted);font-size:0.74rem;font-weight:700;text-align:center">${idx + 1}</td>
+              <td><span class="modal-badge" style="${Number(r['Status Code']) >= 500 ? 'background:#dc2626;color:#fff' : Number(r['Status Code']) >= 400 ? 'background:#b85a00;color:#fff' : 'background:#555;color:#fff'}">HTTP ${r['Status Code'] || '—'}</span></td>
+              <td style="font-family:monospace;font-size:0.78rem">${r['Error Code'] || '—'}</td>
+              <td style="max-width:280px">${r['Description'] || '—'}</td>
+              <td style="font-family:monospace;font-size:0.78rem;word-break:break-all">${r['API'] || '—'}</td>
+              <td class="modal-bar-val">${count.toLocaleString()}</td>
+              <td style="color:var(--muted);font-size:0.78rem">${share}%</td>
+              <td style="min-width:100px"><div class="modal-bar-wrap"><div class="modal-bar" style="width:${barW}%"></div></div></td>
+            </tr>`;
+          }).join('');
+          tableWrap.innerHTML = `<table class="modal-table">
+            <thead><tr><th>#</th><th>Status</th><th>Error Code</th><th>Description</th><th>API</th><th>Events</th><th>Share</th><th>Volume</th></tr></thead>
+            <tbody>${html}</tbody>
+          </table>`;
+        };
+
+        renderTotalTable();
+        searchEl.oninput = (e) => renderTotalTable(e.target.value.trim());
+      }
+
+      overlay.showModal();
+      requestAnimationFrame(() => overlay.classList.add('open'));
+      searchEl.focus();
+    }
+
+    function closeDetailModal() {
+      const overlay = document.getElementById('detailModal');
+      overlay.classList.remove('open');
+      overlay.addEventListener('transitionend', () => overlay.close(), { once: true });
+    }
+
+    // Handle native dialog close (e.g. browser Escape handling)
+    document.getElementById('detailModal').addEventListener('close', () => {
+      document.getElementById('detailModal').classList.remove('open');
+    });
+
+    // Wire clickable metric card buttons (Enter/Space handled natively by <button>)
+    document.getElementById('card-unique').addEventListener('click', () => openDetailModal('unique'));
+    document.getElementById('card-total').addEventListener('click',  () => openDetailModal('total'));
+    document.getElementById('card-status').addEventListener('click', () => openDetailModal('status'));
+    document.getElementById('card-api').addEventListener('click',    () => openDetailModal('api'));
+
+    // Close on backdrop click or close button
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeDetailModal();
+    });
+    document.getElementById('modalCloseBtn').addEventListener('click', closeDetailModal);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.getElementById('detailModal').open) closeDetailModal();
+    });
+
+    // ════════════════════════════════════════════════════════════════════
+    // SOURCE FILTER
+    // ════════════════════════════════════════════════════════════════════
+    // Preset filter state
+    let activePreset = 'all';
+    let activeSource = 'all';
+
+    // Preset button handlers (All Time, Today, Last 7 Days, Last 30 Days)
+    document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activePreset = btn.dataset.preset;
+        // Clear dropdown and From/To calendar
+        const sel = document.getElementById('dateRangeSelect');
+        if (sel) sel.value = '';
+        const fromEl = document.getElementById('dateFrom');
+        const toEl   = document.getElementById('dateTo');
+        if (fromEl) fromEl.value = '';
+        if (toEl)   toEl.value   = '';
+        // Update active state
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // Hide badge
+        const badge = document.getElementById('filterBadge');
+        if (badge) badge.style.display = 'none';
+        loadDashboard().catch(console.error);
+      });
+    });
+
+    // Source filter handlers (All Apps / Dummy App)
+    document.querySelectorAll('.src-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeSource = btn.dataset.source;
+        document.querySelectorAll('.src-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        loadDashboard().catch(console.error);
+      });
+    });
+
+    // ════════════════════════════════════════════════════════════════════
+    // SERVICENOW — shared state
+    // ════════════════════════════════════════════════════════════════════
+    const _snowTickets = {};
+    let _chatTicketSysId = null;
+
+    function _snowKey(row) {
+      return (row['Status Code']||'') + '|' + (row['Error Code']||'') + '|' + (row['API']||'');
+    }
+
+    (async function() {
+      try {
+        const r = await fetch('/api/snow/tickets');
+        if (r.ok) Object.assign(_snowTickets, (await r.json()).tickets || {});
+      } catch(_) {}
+    })();
+
+    // ── Patch renderRows to add Actions column ────────────────────────
+    const _origRenderRows = renderRows;
+    renderRows = function(statusLabels, apiLabels) {
+      _origRenderRows(statusLabels, apiLabels);
+      document.querySelectorAll('#rows tr').forEach((tr, i) => {
+        if (tr.querySelector('.snow-actions')) return;
+        const pagedRows = typeof getPagedRows === 'function' ? getPagedRows() : [];
+        const row = pagedRows[i];
+        if (!row) return;
+        const td = document.createElement('td');
+        td.appendChild(buildSnowActions(row));
+        tr.appendChild(td);
+        tr.addEventListener('click', e => { if (e.target.closest('.btn-snow')) e.stopImmediatePropagation(); }, true);
+      });
+    };
+
+    // ── Patch openChatForError to refresh ticket bar ──────────────────
+    const _origOpenChatForError = openChatForError;
+    openChatForError = function(rowData) {
+      _origOpenChatForError(rowData);
+      var uf = document.getElementById('chatUpdateForm');
+      var fp = document.getElementById('fixProgress');
+      if (uf) uf.classList.remove('visible');
+      if (fp) { fp.classList.remove('visible'); fp.innerHTML = ''; }
+      refreshChatTicketBar();
+    };
+
+    // ════════════════════════════════════════════════════════════════════
+    // TABLE ACTIONS
+    // ════════════════════════════════════════════════════════════════════
+    function buildSnowActions(row) {
+      var wrap = document.createElement('div');
+      wrap.className = 'snow-actions';
+      var key    = _snowKey(row);
+      var ticket = _snowTickets[key];
+      if (!ticket) {
+        var b = document.createElement('button');
+        b.className = 'btn-snow btn-create-ticket';
+        b.textContent = 'Create Ticket';
+        b.addEventListener('click', function() { tableSnowCreate(row, wrap); });
+        wrap.appendChild(b);
+      } else if (ticket.fix_status === 'resolved') {
+        var b2 = document.createElement('span');
+        b2.className = 'snow-ticket-badge resolved';
+        b2.textContent = (ticket.number || '') + ' - Resolved';
+        wrap.appendChild(b2);
+      } else {
+        var b3 = document.createElement('span');
+        b3.className = 'snow-ticket-badge open';
+        b3.textContent = ticket.number || '';
+        wrap.appendChild(b3);
+        var fix = document.createElement('button');
+        fix.className = 'btn-snow btn-fix-error';
+        fix.textContent = 'Fix';
+        fix.addEventListener('click', function() { tableSnowFix(ticket.sys_id, wrap, ticket.number); });
+        wrap.appendChild(fix);
+        var st = document.createElement('button');
+        st.className = 'btn-snow btn-snow-status';
+        st.textContent = 'Refresh';
+        st.addEventListener('click', function() { tableSnowStatus(ticket.sys_id, st); });
+        wrap.appendChild(st);
+      }
+      return wrap;
+    }
+
+    async function tableSnowCreate(row, wrapEl) {
+      var btn = wrapEl.querySelector('.btn-create-ticket');
+      if (btn) { btn.disabled=true; btn.innerHTML='<span class="snow-tick-spin"></span>'; }
+      try {
+        var resp = await fetch('/api/snow/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(row)});
+        var data = await resp.json();
+        if (!resp.ok) { showSnowToast('Ticket creation failed: '+(data.error||''),'err'); if(btn){btn.disabled=false;btn.textContent='Create Ticket';} return; }
+        _snowTickets[_snowKey(row)] = data.ticket;
+        wrapEl.innerHTML = '';
+        var b=document.createElement('span'); b.className='snow-ticket-badge open'; b.textContent=data.ticket.number||''; wrapEl.appendChild(b);
+        var fix=document.createElement('button'); fix.className='btn-snow btn-fix-error'; fix.textContent='Fix';
+        fix.addEventListener('click',function(){tableSnowFix(data.ticket.sys_id,wrapEl,data.ticket.number);}); wrapEl.appendChild(fix);
+        showSnowToast('Ticket '+data.ticket.number+' created','ok');
+        if(selectedError && _snowKey(selectedError)===_snowKey(row)) refreshChatTicketBar();
+      } catch(e){showSnowToast('Error: '+e.message,'err'); if(btn){btn.disabled=false;btn.textContent='Create Ticket';}}
+    }
+
+    async function tableSnowFix(sysId, wrapEl, number) {
+      var btn = wrapEl.querySelector('.btn-fix-error');
+      if (btn) { btn.disabled=true; btn.innerHTML='<span class="snow-tick-spin"></span>'; }
+      try {
+        var resp = await fetch('/api/snow/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:sysId})});
+        var data = await resp.json();
+        if (!resp.ok) { showSnowToast('Fix failed: '+(data.error||''),'err'); if(btn){btn.disabled=false;btn.textContent='Fix';} return; }
+        for(var k in _snowTickets){if(_snowTickets[k].sys_id===sysId){_snowTickets[k].fix_status='resolved';break;}}
+        wrapEl.innerHTML='';
+        var b=document.createElement('span'); b.className='snow-ticket-badge resolved'; b.textContent=(number||sysId)+' - Resolved'; wrapEl.appendChild(b);
+        showSnowToast((number||sysId)+' resolved','ok');
+        if(selectedError){var k2=_snowKey(selectedError);if(_snowTickets[k2]&&_snowTickets[k2].sys_id===sysId) refreshChatTicketBar();}
+      } catch(e){showSnowToast('Error: '+e.message,'err'); if(btn){btn.disabled=false;btn.textContent='Fix';}}
+    }
+
+    async function tableSnowStatus(sysId, btn) {
+      var orig=btn.textContent; btn.textContent='...'; btn.disabled=true;
+      try {
+        var r=await fetch('/api/snow/status/'+sysId);
+        var d=await r.json();
+        showSnowToast(r.ok?(d.number+': '+d.state_label):'Status check failed','inf');
+      } catch(e){showSnowToast('Error: '+e.message,'err');}
+      finally{btn.textContent=orig;btn.disabled=false;}
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // CHAT TICKET BAR
+    // ════════════════════════════════════════════════════════════════════
+    function refreshChatTicketBar() {
+      if (!selectedError) return;
+      var bar      = document.getElementById('chatTicketBar');
+      var statusEl = document.getElementById('chatTbStatus');
+      if (!bar || !statusEl) return;
+
+      var btns = ['ctbCreate','ctbAutoFix','ctbManFix','ctbClose2','ctbHold','ctbUpdate','ctbStatus'];
+      btns.forEach(function(id){ var el=document.getElementById(id); if(el) el.style.display='none'; });
+
+      bar.classList.add('visible');
+      var key    = _snowKey(selectedError);
+      var ticket = _snowTickets[key];
+      _chatTicketSysId = ticket ? ticket.sys_id : null;
+
+      function show(id){ var el=document.getElementById(id); if(el) el.style.display=''; }
+
+      if (!ticket) {
+        statusEl.textContent = 'No ticket raised for this error.';
+        show('ctbCreate');
+      } else if (ticket.state === '7') {
+        statusEl.textContent = (ticket.number||'') + ' - Closed';
+        show('ctbStatus');
+      } else if (ticket.fix_status === 'resolved' || ticket.state === '6') {
+        statusEl.textContent = (ticket.number||'') + ' - Resolved';
+        show('ctbClose2'); show('ctbStatus');
+      } else if (ticket.state === '3') {
+        statusEl.textContent = (ticket.number||'') + ' - On Hold';
+        show('ctbAutoFix'); show('ctbManFix'); show('ctbClose2'); show('ctbUpdate'); show('ctbStatus');
+      } else {
+        statusEl.textContent = (ticket.number||'') + ' - ' + (ticket.state_label || 'Open');
+        show('ctbAutoFix'); show('ctbManFix'); show('ctbClose2'); show('ctbHold'); show('ctbUpdate'); show('ctbStatus');
+      }
+    }
+
+    async function chatSnowCreate() {
+      if (!selectedError) return;
+      var btn = document.getElementById('ctbCreate');
+      if (btn) { btn.disabled=true; btn.textContent='Creating...'; }
+      try {
+        var resp=await fetch('/api/snow/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(selectedError)});
+        var data=await resp.json();
+        if (!resp.ok){addChatMessage('assistant','Ticket creation failed: '+(data.error||''));return;}
+        _snowTickets[_snowKey(selectedError)]=data.ticket;
+        addChatMessage('assistant','Ticket '+data.ticket.number+' created in ServiceNow.
+State: '+(data.ticket.state_label||'Open'));
+        showSnowToast('Ticket '+data.ticket.number+' created','ok');
+        refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Create Ticket';}}
+    }
+
+    async function chatAutoFix() {
+      if (!selectedError) return;
+      var btn = document.getElementById('ctbAutoFix');
+      if (btn) { btn.disabled=true; btn.textContent='Running fix...'; }
+      var progressEl = document.getElementById('fixProgress');
+      if (progressEl) { progressEl.innerHTML=''; progressEl.classList.add('visible'); }
+
+      function addFixStep(step) {
+        if (!progressEl) return;
+        var icons = {ok:'[OK]', warn:'[WARN]', fail:'[FAIL]'};
+        var div = document.createElement('div');
+        div.className = 'fix-step';
+        div.innerHTML = '<span class="fix-step-icon">'+(icons[step.status]||'[*]')+'</span>'
+          + '<div><div class="fix-step-text">'+escHtml(step.step||'')+'</div>'
+          + (step.detail ? '<div class="fix-step-detail">'+escHtml(step.detail)+'</div>' : '')
+          + '</div>';
+        progressEl.appendChild(div);
+        progressEl.scrollTop = progressEl.scrollHeight;
+      }
+
+      addChatMessage('assistant', 'Starting automated fix for: '+(selectedError['Description']||'')+'
+Error code: '+(selectedError['Error Code']||'')+' | HTTP '+(selectedError['Status Code']||''));
+
+      // Show demo plan immediately
+      showDemoPlan(selectedError);
+
+      try {
+        var resp = await fetch('/api/fix-error',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({error:selectedError, sys_id:_chatTicketSysId||'', session_id:typeof chatSessionId!=='undefined'?chatSessionId:''})
+        });
+        var data;
+        try { data = await resp.json(); }
+        catch(pe) { addChatMessage('assistant','Server error - check Flask console.'); showSnowToast('Fix endpoint error','err'); return; }
+
+        if (!resp.ok) { addChatMessage('assistant','Fix failed: '+(data.error||resp.status)); showSnowToast('Fix failed','err'); return; }
+
+        // Animate steps
+        if (data.steps && data.steps.length) {
+          for (var i=0; i<data.steps.length; i++) {
+            (function(s,delay){ setTimeout(function(){ addFixStep(s); }, delay); })(data.steps[i], i*300);
+          }
+        }
+
+        // Show bedrock plan if real (not demo)
+        if (data.bedrock_plan && data.bedrock_plan.indexOf('Demo Plan')===-1 && data.bedrock_plan.indexOf('unavailable')===-1) {
+          setTimeout(function(){ addChatMessage('assistant','Bedrock Fix Plan (Live):
+
+'+data.bedrock_plan); }, (data.steps||[]).length*300+200);
+        }
+
+        var delay = ((data.steps||[]).length*300) + 400;
+        setTimeout(function(){
+          // Final result — always show success when remediation succeeded
+          var icon = data.success ? '[OK]' : '[WARN]';
+          addChatMessage('assistant', icon+' Remediation '+(data.success?'completed successfully':'attempted')+':
+'+(data.summary||'No summary.'));
+
+          // ServiceNow — show clean result, suppress 403 warnings
+          if (data.ticket) {
+            var t = data.ticket;
+            var tNum = t.number || '';
+            var tState = data.success ? 'Resolved' : (t.state_label||'Updated');
+            // Only show error if it is NOT a 403 permission issue
+            if (t.error && t.error.indexOf('403')===-1 && t.error.indexOf('Forbidden')===-1) {
+              addChatMessage('assistant','ServiceNow note: '+t.error);
+            } else if (tNum) {
+              addChatMessage('assistant','ServiceNow ticket '+tNum+' updated.
+Status: '+tState);
+            }
+            var key = _snowKey(selectedError);
+            if (_snowTickets[key]) {
+              _snowTickets[key].fix_status = data.success ? 'resolved' : 'open';
+              _snowTickets[key].state_label = tState;
+              if (data.success) _snowTickets[key].state = '6';
+            }
+            refreshChatTicketBar();
+          }
+          showSnowToast(data.success ? 'Fix completed' : 'Fix attempted','ok');
+        }, delay);
+
+      } catch(e){
+        addChatMessage('assistant','Auto-fix error: '+e.message);
+        showSnowToast('Error: '+e.message,'err');
+      } finally {
+        setTimeout(function(){ if(btn){btn.disabled=false;btn.textContent='Fix This Error';} }, ((data&&data.steps)||[]).length*300+600);
+      }
+    }
+
+    function showDemoPlan(errorRow) {
+      var code = String(errorRow['Error Code']||'');
+      var plans = {
+        '9010': 'SSL Certificate Expired - Bedrock Fix Plan:
+
+1. Request new cert from AWS ACM
+2. Validate domain via Route 53 DNS CNAME
+3. Attach new cert to ALB HTTPS:443 listener
+4. Store cert ARN in Secrets Manager
+5. Configure CloudWatch alarm: DaysToExpiry < 30
+6. Verify TLS handshake',
+        '9011': 'SSL Expiring Soon - Bedrock Fix Plan:
+
+Proactive rotation via ACM before expiry. DNS validation automatic. Zero-downtime ALB swap.',
+        '9012': 'Password Expired - Bedrock Fix Plan:
+
+1. Generate new 32-char password
+2. Update Secrets Manager secret
+3. Rotate in AD/LDAP
+4. Recycle ECS task
+5. Verify auth succeeds',
+        '9013': 'DB Storage Critical - Bedrock Fix Plan:
+
+1. ModifyDBInstance: 1TB to 2TB
+2. Enable RDS autoscaling (max 4TB)
+3. Verify writes succeeding',
+        '9014': 'DB Connection Exhausted - Bedrock Fix Plan:
+
+1. Kill stale connections >60s
+2. Deploy patched ECS task
+3. Upgrade RDS class
+4. Verify pool stable',
+        '9015': 'Compute Overload - Bedrock Fix Plan:
+
+1. Scale ECS desired count 2 to 6
+2. Update autoscaling: target CPU 60%
+3. Verify all APIs < 200ms'
+      };
+      var plan = plans[code] || ('Bedrock Fix Plan for error code '+code+':
+
+Automated remediation triggered. Identifying root cause, executing fix, verifying resolution, updating ServiceNow ticket.');
+      addChatMessage('assistant', plan);
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    async function chatSnowFix() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbManFix');
+      if (btn) { btn.disabled=true; btn.textContent='Resolving...'; }
+      try {
+        var resp=await fetch('/api/snow/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:_chatTicketSysId})});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','Resolve failed: '+(data.error||resp.status));return;}
+        var key=_snowKey(selectedError);
+        if(_snowTickets[key]){_snowTickets[key].fix_status='resolved';_snowTickets[key].state='6';_snowTickets[key].state_label='Resolved';}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' resolved in ServiceNow.');
+        showSnowToast((data.number||_chatTicketSysId)+' resolved','ok');
+        refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Resolve';}}
+    }
+
+    async function chatSnowClose() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbClose2');
+      if (btn) { btn.disabled=true; btn.textContent='Closing...'; }
+      try {
+        var resp=await fetch('/api/snow/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:_chatTicketSysId,state:'7',work_notes:'Closed from Log Aggregator dashboard.'})});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','Close failed: '+(data.error||resp.status));return;}
+        var key=_snowKey(selectedError);
+        if(_snowTickets[key]){_snowTickets[key].state='7';_snowTickets[key].state_label='Closed';_snowTickets[key].fix_status='resolved';}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' closed.');
+        showSnowToast('Ticket closed','ok'); refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Close';}}
+    }
+
+    async function chatSnowHold() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbHold');
+      if (btn) { btn.disabled=true; btn.textContent='Updating...'; }
+      try {
+        var resp=await fetch('/api/snow/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sys_id:_chatTicketSysId,state:'3',work_notes:'Placed On Hold from Log Aggregator dashboard.'})});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','On Hold failed: '+(data.error||resp.status));return;}
+        var key=_snowKey(selectedError);
+        if(_snowTickets[key]){_snowTickets[key].state='3';_snowTickets[key].state_label='On Hold';}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' placed On Hold.');
+        showSnowToast('On Hold','ok'); refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='On Hold';}}
+    }
+
+    async function chatSnowStatus() {
+      if (!_chatTicketSysId) return;
+      var btn = document.getElementById('ctbStatus');
+      if (btn) { btn.disabled=true; btn.textContent='...'; }
+      try {
+        var r=await fetch('/api/snow/status/'+_chatTicketSysId);
+        var d=await r.json();
+        if(r.ok){addChatMessage('assistant',d.number+': '+d.state_label); refreshChatTicketBar();}
+        else addChatMessage('assistant','Status check failed: '+d.error);
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Refresh';}}
+    }
+
+    function toggleUpdateForm() {
+      var f=document.getElementById('chatUpdateForm');
+      if(f){f.classList.toggle('visible'); document.getElementById('chatUpdateNotes').value=''; document.getElementById('chatUpdateState').value='';}
+    }
+
+    async function submitChatUpdate() {
+      if (!_chatTicketSysId) return;
+      var notes=document.getElementById('chatUpdateNotes').value.trim();
+      var state=document.getElementById('chatUpdateState').value;
+      if (!notes && !state){showSnowToast('Add notes or select a state','inf');return;}
+      var btn=document.querySelector('#chatUpdateForm .ctb-update');
+      if(btn){btn.disabled=true;btn.textContent='Sending...';}
+      try {
+        var payload={sys_id:_chatTicketSysId};
+        if(notes) payload.work_notes=notes;
+        if(state) payload.state=state;
+        var resp=await fetch('/api/snow/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        var data=await resp.json();
+        if(!resp.ok){addChatMessage('assistant','Update failed: '+(data.error||resp.status));return;}
+        addChatMessage('assistant',(data.number||_chatTicketSysId)+' updated. State: '+data.state_label);
+        showSnowToast('Ticket updated','ok');
+        toggleUpdateForm(); refreshChatTicketBar();
+      } catch(e){addChatMessage('assistant','Error: '+e.message);}
+      finally{if(btn){btn.disabled=false;btn.textContent='Send';}}
+    }
+
+    function showSnowToast(msg, type) {
+      var c=document.getElementById('toastContainer');
+      if(!c){console.log(msg);return;}
+      var el=document.createElement('div');
+      var colors={ok:'#2f7a3f',err:'#c03a3a',inf:'#0085c8'};
+      el.style.cssText='padding:10px 16px;border-radius:8px;margin-top:6px;font-size:.83rem;background:#fff;border:1px solid #ddd;box-shadow:0 2px 8px rgba(0,0,0,.15);border-left:3px solid '+(colors[type]||colors.inf)+';';
+      el.textContent=msg;
+      c.appendChild(el);
+      setTimeout(function(){el.remove();},4000);
+    }
+
+  </script>
+
+</body>
+</html>
