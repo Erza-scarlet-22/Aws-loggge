@@ -546,9 +546,7 @@
     }
     .preset-btn:hover, .preset-btn.active {
       background: var(--accent); color: #fff; border-color: var(--accent);
-    }th, initial-scale=1.0" />
-  <title>Log Aggregation Intelligence Dashboard</title>
-  <style>
+    }
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
 
     :root {
@@ -1723,11 +1721,16 @@
       <span class="ret-change">Configurable via LOG_RETENTION_DAYS</span>
     </div>
 
-    <!-- Date dropdown filter (Stories 4968/4970) -->
+    <!-- Filter strip: preset buttons + retention-based dropdown -->
     <div class="filter-strip" id="filterStrip">
-      <label for="dateRangeSelect">View logs up to:</label>
+      <button class="preset-btn active" data-preset="all">All Time</button>
+      <button class="preset-btn" data-preset="today">Today</button>
+      <button class="preset-btn" data-preset="week">Last 7 Days</button>
+      <button class="preset-btn" data-preset="month">Last 30 Days</button>
+      <span class="date-sep" style="color:var(--line);font-size:1.2rem;">|</span>
+      <label for="dateRangeSelect" style="font-size:.78rem;font-weight:600;color:var(--muted);">Up to date:</label>
       <select class="date-range-select" id="dateRangeSelect">
-        <option value="">-- Select date range --</option>
+        <option value="">-- Select a date --</option>
       </select>
       <span class="filter-active-badge" id="filterBadge"></span>
     </div>
@@ -2013,14 +2016,24 @@
 
     function buildApiUrl() {
       const params = new URLSearchParams();
+
+      // Preset buttons (Today, Last 7 Days, Last 30 Days)
+      if (typeof activePreset !== 'undefined' && activePreset && activePreset !== 'all') {
+        params.set('preset', activePreset);
+      }
+
+      // Dropdown date (overrides preset if set — more specific)
       const sel = document.getElementById('dateRangeSelect');
       const selectedDate = sel ? sel.value : '';
       if (selectedDate) {
         params.set('date', selectedDate);
       }
+
+      // Source filter
       if (activeSource && activeSource !== 'all') {
         params.set('source', activeSource);
       }
+
       const query = params.toString();
       return query ? '/api/dashboard-data?' + query : '/api/dashboard-data';
     }
@@ -2832,17 +2845,27 @@
       return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     }
 
-    // Handle dropdown selection
+    // Handle dropdown selection — clears preset active state when a date is chosen
     document.getElementById('dateRangeSelect').addEventListener('change', function() {
       const selectedDate = this.value;
       const badge = document.getElementById('filterBadge');
       if (selectedDate) {
-        // Show badge with selected date
-        badge.style.display = 'inline-block';
-        const opt = this.options[this.selectedIndex];
-        badge.textContent   = opt.textContent.split('—')[0].trim();
+        // Deactivate all preset buttons since dropdown overrides them
+        activePreset = '';
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        // Show badge
+        if (badge) {
+          badge.style.display = 'inline-block';
+          const opt = this.options[this.selectedIndex];
+          badge.textContent   = opt.textContent.split('—')[0].trim();
+        }
       } else {
-        badge.style.display = 'none';
+        // Dropdown reset — restore All Time as active
+        activePreset = 'all';
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        const allBtn = document.querySelector('.preset-btn[data-preset="all"]');
+        if (allBtn) allBtn.classList.add('active');
+        if (badge) badge.style.display = 'none';
       }
       loadDashboard().catch(console.error);
     });
@@ -3117,7 +3140,28 @@
     // ════════════════════════════════════════════════════════════════════
     // SOURCE FILTER
     // ════════════════════════════════════════════════════════════════════
+    // Preset filter state
+    let activePreset = 'all';
     let activeSource = 'all';
+
+    // Preset button handlers (All Time, Today, Last 7 Days, Last 30 Days)
+    document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activePreset = btn.dataset.preset;
+        // Clear dropdown when preset is selected
+        const sel = document.getElementById('dateRangeSelect');
+        if (sel) sel.value = '';
+        // Update active state
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // Hide badge
+        const badge = document.getElementById('filterBadge');
+        if (badge) badge.style.display = 'none';
+        loadDashboard().catch(console.error);
+      });
+    });
+
+    // Source filter handlers (All Apps / Dummy App)
     document.querySelectorAll('.src-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         activeSource = btn.dataset.source;
@@ -3126,7 +3170,6 @@
         loadDashboard().catch(console.error);
       });
     });
-    // Note: source filter is now baked into buildApiUrl directly
 
     // ════════════════════════════════════════════════════════════════════
     // SERVICENOW — shared state
