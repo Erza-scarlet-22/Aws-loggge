@@ -1721,17 +1721,23 @@
       <span class="ret-change">Configurable via LOG_RETENTION_DAYS</span>
     </div>
 
-    <!-- Filter strip: preset buttons + retention-based dropdown -->
+    <!-- Filter strip: preset buttons + retention dropdown + custom From/To calendar -->
     <div class="filter-strip" id="filterStrip">
       <button class="preset-btn active" data-preset="all">All Time</button>
       <button class="preset-btn" data-preset="today">Today</button>
       <button class="preset-btn" data-preset="week">Last 7 Days</button>
       <button class="preset-btn" data-preset="month">Last 30 Days</button>
       <span class="date-sep" style="color:var(--line);font-size:1.2rem;">|</span>
-      <label for="dateRangeSelect" style="font-size:.78rem;font-weight:600;color:var(--muted);">Up to date:</label>
+      <label for="dateRangeSelect" style="font-size:.78rem;font-weight:600;color:var(--muted);">Period:</label>
       <select class="date-range-select" id="dateRangeSelect">
-        <option value="">-- Select a date --</option>
+        <option value="">-- Select a date range --</option>
       </select>
+      <span class="date-sep" style="color:var(--line);font-size:1.2rem;">|</span>
+      <label for="dateFrom" style="font-size:.78rem;font-weight:600;color:var(--muted);">From</label>
+      <input type="date" id="dateFrom" style="border:1.5px solid var(--line);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;background:var(--panel);color:var(--text);cursor:pointer;" />
+      <label for="dateTo" style="font-size:.78rem;font-weight:600;color:var(--muted);">To</label>
+      <input type="date" id="dateTo" style="border:1.5px solid var(--line);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;background:var(--panel);color:var(--text);cursor:pointer;" />
+      <button class="preset-btn" id="applyRange" style="background:var(--accent);color:#fff;border-color:var(--accent);">Apply</button>
       <span class="filter-active-badge" id="filterBadge"></span>
     </div>
 
@@ -2017,20 +2023,29 @@
     function buildApiUrl() {
       const params = new URLSearchParams();
 
-      // Preset buttons (Today, Last 7 Days, Last 30 Days)
-      if (typeof activePreset !== 'undefined' && activePreset && activePreset !== 'all') {
-        params.set('preset', activePreset);
-      }
+      // From/To calendar (highest priority — most specific)
+      const fromEl = document.getElementById('dateFrom');
+      const toEl   = document.getElementById('dateTo');
+      const fromVal = fromEl ? fromEl.value : '';
+      const toVal   = toEl   ? toEl.value   : '';
 
-      // Dropdown date (overrides preset if set — more specific)
-      const sel = document.getElementById('dateRangeSelect');
-      const selectedDate = sel ? sel.value : '';
-      if (selectedDate) {
-        params.set('date', selectedDate);
+      if (fromVal || toVal) {
+        if (fromVal) params.set('from', fromVal);
+        if (toVal)   params.set('to',   toVal);
+      } else {
+        // Dropdown date (second priority)
+        const sel = document.getElementById('dateRangeSelect');
+        const selectedDate = sel ? sel.value : '';
+        if (selectedDate) {
+          params.set('date', selectedDate);
+        } else if (typeof activePreset !== 'undefined' && activePreset && activePreset !== 'all') {
+          // Preset buttons (lowest priority)
+          params.set('preset', activePreset);
+        }
       }
 
       // Source filter
-      if (activeSource && activeSource !== 'all') {
+      if (typeof activeSource !== 'undefined' && activeSource && activeSource !== 'all') {
         params.set('source', activeSource);
       }
 
@@ -2443,10 +2458,13 @@
         }
 
         // Build date dropdown options from the retention window
-        // Only builds once — if dropdown already has real options, skip
+        // Always rebuild on first load (length <= 1 means only the placeholder)
+        // Also rebuild if retentionDays changed
         const sel = document.getElementById('dateRangeSelect');
-        if (sel && sel.options.length <= 1) {
+        const prevDays = sel ? sel.dataset.retentionDays : null;
+        if (sel && (sel.options.length <= 1 || prevDays !== String(days))) {
           buildDateDropdown(days, cutoff, today);
+          if (sel) sel.dataset.retentionDays = String(days);
         }
       }
 
@@ -2769,6 +2787,16 @@
       const sel = document.getElementById('dateRangeSelect');
       if (!sel) return;
 
+      // Guard: if no cutoff date provided, calculate from retention days
+      if (!cutoffDate || cutoffDate === 'null') {
+        const d = new Date();
+        d.setDate(d.getDate() - retentionDays);
+        cutoffDate = d.toISOString().slice(0, 10);
+      }
+      if (!today || today === 'null') {
+        today = new Date().toISOString().slice(0, 10);
+      }
+
       const todayDt   = new Date(today      + 'T00:00:00');
       const cutoffDt  = new Date(cutoffDate + 'T00:00:00');
 
@@ -2845,14 +2873,40 @@
       return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     }
 
-    // Handle dropdown selection — clears preset active state when a date is chosen
+    // Apply button for From/To calendar range
+    const applyBtn = document.getElementById('applyRange');
+    if (applyBtn) {
+      applyBtn.addEventListener('click', function() {
+        const fromVal = document.getElementById('dateFrom').value;
+        const toVal   = document.getElementById('dateTo').value;
+        if (!fromVal && !toVal) return;
+        // Clear preset buttons and dropdown
+        activePreset = '';
+        document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        const sel = document.getElementById('dateRangeSelect');
+        if (sel) sel.value = '';
+        // Show badge
+        const badge = document.getElementById('filterBadge');
+        if (badge) {
+          badge.style.display = 'inline-block';
+          badge.textContent = (fromVal || '...') + ' → ' + (toVal || '...');
+        }
+        loadDashboard().catch(console.error);
+      });
+    }
+
+    // Handle dropdown selection — clears preset and From/To calendar
     document.getElementById('dateRangeSelect').addEventListener('change', function() {
       const selectedDate = this.value;
       const badge = document.getElementById('filterBadge');
       if (selectedDate) {
-        // Deactivate all preset buttons since dropdown overrides them
+        // Clear preset buttons and From/To calendar
         activePreset = '';
         document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+        const fromEl = document.getElementById('dateFrom');
+        const toEl   = document.getElementById('dateTo');
+        if (fromEl) fromEl.value = '';
+        if (toEl)   toEl.value   = '';
         // Show badge
         if (badge) {
           badge.style.display = 'inline-block';
@@ -2899,6 +2953,11 @@
       }
       document.getElementById('countdownLabel').textContent = countdownSec + 's';
     }
+
+    // ── Global filter state — declared here so all handlers below can access them ──
+    // IMPORTANT: must be declared before loadDashboard() is called on the next line
+    let activePreset = 'all';
+    let activeSource = 'all';
 
     loadDashboard().catch(console.error);
     setInterval(() => {
@@ -3138,19 +3197,20 @@
     });
 
     // ════════════════════════════════════════════════════════════════════
-    // SOURCE FILTER
+    // SOURCE FILTER (handlers below — variables declared at top of script)
     // ════════════════════════════════════════════════════════════════════
-    // Preset filter state
-    let activePreset = 'all';
-    let activeSource = 'all';
 
     // Preset button handlers (All Time, Today, Last 7 Days, Last 30 Days)
     document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
       btn.addEventListener('click', () => {
         activePreset = btn.dataset.preset;
-        // Clear dropdown when preset is selected
+        // Clear dropdown and From/To calendar
         const sel = document.getElementById('dateRangeSelect');
         if (sel) sel.value = '';
+        const fromEl = document.getElementById('dateFrom');
+        const toEl   = document.getElementById('dateTo');
+        if (fromEl) fromEl.value = '';
+        if (toEl)   toEl.value   = '';
         // Update active state
         document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
