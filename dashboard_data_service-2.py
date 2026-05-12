@@ -114,8 +114,22 @@ def _read_json(conversion_dir: str) -> List[dict]:
     if _is_aws():
         text = _s3_read(_json_key())
         if text is None:
-            _logger.warning('[dashboard] unique_errors.json not found in S3 — '
-                            'ensure Lambda has processed at least one log file')
+            # S3 failed (token expired, no file yet, etc.)
+            # Fall back to local Conversion/unique_errors.json if it exists
+            _logger.warning('[dashboard] S3 read failed — trying local fallback')
+            local_path = os.path.join(conversion_dir, JSON_FILENAME)
+            if os.path.exists(local_path):
+                try:
+                    with open(local_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            _logger.info('[dashboard] Local fallback: %d entries from %s',
+                                         len(data), local_path)
+                            return data
+                except Exception as exc:
+                    _logger.warning('[dashboard] Local fallback failed: %s', exc)
+            _logger.warning('[dashboard] No data source available — '
+                            'refresh your AWS credentials in .env')
             return []
         try:
             data = json.loads(text)
@@ -164,6 +178,16 @@ def _read_csv(conversion_dir: str) -> Optional[List[Dict]]:
     if _is_aws():
         text = _s3_read(_csv_key())
         if text is None:
+            # Try local CSV as fallback
+            local_csv = os.path.join(conversion_dir, CSV_FILENAME)
+            if os.path.exists(local_csv):
+                try:
+                    with open(local_csv, 'r', encoding='utf-8') as f:
+                        rows = list(csv.DictReader(f))
+                    _logger.info('[dashboard] Local CSV fallback: %d rows', len(rows))
+                    return rows
+                except Exception:
+                    pass
             return None
         reader = csv.DictReader(io.StringIO(text))
         rows = []
